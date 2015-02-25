@@ -489,10 +489,15 @@ func RandomUint64() (uint64, error) {
 	return randomUint64(rand.Reader)
 }
 
-// Sha512 returns the sha256 of the bytes
+// Sha512 returns the sha512 of the bytes
 func Sha512(b []byte) []byte {
 	t := sha512.Sum512(b)
 	sha := make([]byte, 512/8)
 	copy(sha, t[:])
 	return sha
+}
+
+// DoubleSha512 returns the sha512^2 of the bytes
+func DoubleSha512(b []byte) []byte {
+	return Sha512(Sha512(b))
 }
