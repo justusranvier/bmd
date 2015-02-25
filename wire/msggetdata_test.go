@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/davecgh/go-spew/spew"
-	"github.com/jimmysong/wire"
+	"github.com/jimmysong/bmd/wire"
 )
 
 // TestGetData tests the MsgGetData API.

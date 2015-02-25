@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/davecgh/go-spew/spew"
-	"github.com/jimmysong/wire"
+	"github.com/jimmysong/bmd/wire"
 )
 
 // TestVersion tests the MsgVersion API.
@@ -179,7 +179,7 @@ func TestVersionWire(t *testing.T) {
 	tests := []struct {
 		in  *wire.MsgVersion // Message to encode
 		out *wire.MsgVersion // Expected decoded message
-		buf []byte             // Wire encoding
+		buf []byte           // Wire encoding
 	}{
 		// Latest protocol version.
 		{
@@ -259,10 +259,10 @@ func TestVersionWireErrors(t *testing.T) {
 
 	tests := []struct {
 		in       *wire.MsgVersion // Value to encode
-		buf      []byte             // Wire encoding
-		max      int                // Max size of fixed buffer to induce errors
-		writeErr error              // Expected write error
-		readErr  error              // Expected read error
+		buf      []byte           // Wire encoding
+		max      int              // Max size of fixed buffer to induce errors
+		writeErr error            // Expected write error
+		readErr  error            // Expected read error
 	}{
 		// Force error in protocol version.
 		{baseVersion, baseVersionEncoded, 0, io.ErrShortWrite, io.EOF},
@@ -283,9 +283,9 @@ func TestVersionWireErrors(t *testing.T) {
 		// Force error in validating user agent
 		{exceedUAVer, exceedUAVerEncoded, newLen, wireErr, wireErr},
 		// Force error in stream numbers length.
-		{baseVersion, baseVersionEncoded, 99, io.ErrShortWrite, io.EOF},
+		{baseVersion, baseVersionEncoded, 97, io.ErrShortWrite, io.EOF},
 		// Force error in stream number.
-		{baseVersion, baseVersionEncoded, 100, io.ErrShortWrite, io.EOF},
+		{baseVersion, baseVersionEncoded, 98, io.ErrShortWrite, io.EOF},
 	}
 
 	t.Logf("Running %d tests", len(tests))
@@ -369,9 +369,8 @@ var baseVersionEncoded = []byte{
 	0x00, 0x00, 0xff, 0xff, 0x7f, 0x00, 0x00, 0x01, // IP 127.0.0.1
 	0x20, 0x8d, // Port 8333 in big-endian
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0xe0, 0xf3, // Nonce
-	0x12, // Varint for user agent length
-	0x2f, 0x62, 0x6d, 0x77, 0x69, 0x72, 0x65, 0x74,
-	0x65, 0x73, 0x74, 0x3a, 0x30, 0x2e, 0x30, 0x2e,
-	0x31, 0x2f, // User agent
+	0x10, // Varint for user agent length
+	0x2f, 0x77, 0x69, 0x72, 0x65, 0x74, 0x65, 0x73,
+	0x74, 0x3a, 0x30, 0x2e, 0x30, 0x2e, 0x31, 0x2f, // User agent
 	0x01, 0x01, // Stream Numbers
 }

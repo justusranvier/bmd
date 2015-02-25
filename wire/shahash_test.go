@@ -5,7 +5,7 @@ import (
 	"encoding/hex"
 	"testing"
 
-	"github.com/jimmysong/wire"
+	"github.com/jimmysong/bmd/wire"
 )
 
 // TestShaHash tests the ShaHash API.

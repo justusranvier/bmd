@@ -5,7 +5,7 @@ import (
 	"encoding/hex"
 	"testing"
 
-	"github.com/jimmysong/wire"
+	"github.com/jimmysong/bmd/wire"
 )
 
 // TestRipeHash tests the RipeHash API.

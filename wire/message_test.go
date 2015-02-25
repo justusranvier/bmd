@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/davecgh/go-spew/spew"
-	"github.com/jimmysong/wire"
+	"github.com/jimmysong/bmd/wire"
 )
 
 // makeHeader is a convenience function to make a message header in the form of
@@ -84,9 +84,9 @@ func TestMessage(t *testing.T) {
 		in    wire.Message       // Value to encode
 		out   wire.Message       // Expected decoded value
 		bmnet wire.BitmessageNet // Network to use for wire.encoding
-		bytes int                  // Expected num bytes read/written
+		bytes int                // Expected num bytes read/written
 	}{
-		{msgVersion, msgVersion, wire.MainNet, 121},
+		{msgVersion, msgVersion, wire.MainNet, 119},
 		{msgVerack, msgVerack, wire.MainNet, 24},
 		{msgGetAddr, msgGetAddr, wire.MainNet, 24},
 		{msgAddr, msgAddr, wire.MainNet, 25},
@@ -242,11 +242,11 @@ func TestReadMessageWireErrors(t *testing.T) {
 	tooLongObjectBytes = append(tooLongObjectBytes, make([]byte, 1<<18+1)...)
 
 	tests := []struct {
-		buf     []byte               // Wire encoding
+		buf     []byte             // Wire encoding
 		bmnet   wire.BitmessageNet // Bitmessage network for wire.encoding
-		max     int                  // Max size of fixed buffer to induce errors
-		readErr error                // Expected read error
-		bytes   int                  // Expected num bytes read
+		max     int                // Max size of fixed buffer to induce errors
+		readErr error              // Expected read error
+		bytes   int                // Expected num bytes read
 	}{
 		// Latest protocol version with intentional read errors.
 
@@ -435,9 +435,9 @@ func TestWriteMessageWireErrors(t *testing.T) {
 	tests := []struct {
 		msg   wire.Message       // Message to encode
 		bmnet wire.BitmessageNet // Bitmessage network for wire.encoding
-		max   int                  // Max size of fixed buffer to induce errors
-		err   error                // Expected error
-		bytes int                  // Expected num bytes written
+		max   int                // Max size of fixed buffer to induce errors
+		err   error              // Expected error
+		bytes int                // Expected num bytes written
 	}{
 		// Command too long.
 		{badCommandMsg, bmnet, 0, wireErr, 0},
