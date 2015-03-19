@@ -110,6 +110,20 @@ func TestStartStop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Address Manager failed to stop: %v", err)
 	}
+	// Stop can be called a second time without causing bad behavior.
+	err = n.Stop()
+	if err != nil {
+		t.Fatalf("Address Manager failed to stop: %v", err)
+	}
+
+	n = addrmgr.New("teststartstop", lookupFunc)
+	n.Start()
+	// Start can be called a second time without causing bad behavior.
+	n.Start()
+	err = n.Stop()
+	if err != nil {
+		t.Fatalf("Address Manager failed to stop: %v", err)
+	}
 }
 
 func TestAddAddressByIP(t *testing.T) {
