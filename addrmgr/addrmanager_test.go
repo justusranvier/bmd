@@ -103,6 +103,51 @@ func lookupFunc(host string) ([]net.IP, error) {
 	return nil, errors.New("not implemented")
 }
 
+// mockLookupFunc takes a map of hosts to ip addresses and returns
+// a lookup function for testing purposes. 
+func mockLookupFunc(m map[string][]net.IP) func(string) ([]net.IP, error) {
+	return func(host string) ([]net.IP, error) {
+		ip := m[host]
+		if ip == nil {
+			return ip, errors.New("unknown host")
+		} else {
+			return ip, nil
+		}
+	}
+}
+
+// TestDeserializeNetAddress ensures that DeserializeNetAddress
+// gives errors for invalid inputs.
+func TestDeserializeNetAddress(t *testing.T) {
+	var tests = []struct {
+		input string //The input string. 
+		err    bool   //Whether an error is returned.
+	}{
+		{
+			"spoon",
+			true,
+		},
+		{
+			"google.com:wxyz",
+			true,
+		},
+		{
+			"google.com:1234",
+			false,
+		},
+	}
+
+	n := addrmgr.New("",
+		mockLookupFunc(map[string][]net.IP{
+			"google.com"	: []net.IP{net.ParseIP("23.34.45.56")}}))
+
+	for _, test := range tests {
+		if _, err := n.DeserializeNetAddress(test.input); (err == nil) == test.err {
+			t.Errorf("TestDeserializeNetAddress failed for input %s with error %s", test.input, err)
+		}
+	}
+}
+
 func TestStartStop(t *testing.T) {
 	n := addrmgr.New("teststartstop", lookupFunc)
 	n.Start()
@@ -285,6 +330,47 @@ func TestNeedMoreAddresses(t *testing.T) {
 	b = n.NeedMoreAddresses()
 	if b == true {
 		t.Errorf("Expected that we don't need more addresses")
+	}
+}
+
+func TestHostToNetAddress(t *testing.T) {
+	n := addrmgr.New("", 
+		mockLookupFunc(map[string][]net.IP{
+			"google.com"			: []net.IP{net.ParseIP("23.34.45.56")},
+			"facebook.com"			: []net.IP{},
+			"abcdefghijklmnop.onion"	: []net.IP{net.ParseIP("11.33.55.77")},
+			"89abcdefghijklmn.onion"	: []net.IP{net.ParseIP("77.66.55.44")}}))
+
+	var tests = []struct {
+		input string  //The input string. 
+		err    bool   //Whether an error is returned.
+	}{
+		{
+			"google.com",
+			false,
+		},
+		{
+			"facebook.com",
+			true,
+		},
+		{
+			"abcdefghijklmnop.onion",
+			false,
+		},
+		{
+			"twitter.com",
+			true,
+		},
+		{
+			"89abcdefghijklmn.onion",
+			true,
+		},
+	}
+
+	for _, test := range tests {
+		if _, err := n.HostToNetAddress(test.input, uint16(1234), wire.SFNodeNetwork); (err == nil) == test.err {
+			t.Errorf("TestDeserializeNetAddress failed for input \"%s\" with error \"%s\"", test.input, err)
+		}
 	}
 }
 
