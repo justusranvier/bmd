@@ -85,6 +85,12 @@ func addNaTests() {
 	addNaTest("fed1::2:2", 8334, "[fed1::2:2]:8334")
 	addNaTest("fee2::3:3", 8335, "[fee2::3:3]:8335")
 	addNaTest("fef3::4:4", 8336, "[fef3::4:4]:8336")
+
+	//Tor
+	addNaTest("fd87:d87e:eb43::a1", 8333, "aaaaaaaaaaaaaafb.onion:8333")
+	addNaTest("fd87:d87e:eb43:cd01::bf32:207", 8334, "zuaqaaaaac7teaqh.onion:8334")
+	addNaTest("fd87:d87e:eb43::", 8335, "aaaaaaaaaaaaaaaa.onion:8335")
+	addNaTest("fd87:d87e:eb43:ffff::ffff", 8336, "777qaaaaaaaab777.onion:8336")
 }
 
 func addNaTest(ip string, port uint16, want string) {
