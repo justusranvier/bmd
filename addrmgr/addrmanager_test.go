@@ -3,6 +3,7 @@ package addrmgr_test
 import (
 	"errors"
 	"fmt"
+	"math/rand"
 	"net"
 	"reflect"
 	"testing"
@@ -86,11 +87,52 @@ func addNaTests() {
 	addNaTest("fee2::3:3", 8335, "[fee2::3:3]:8335")
 	addNaTest("fef3::4:4", 8336, "[fef3::4:4]:8336")
 
-	//Tor
+	// Tor
 	addNaTest("fd87:d87e:eb43::a1", 8333, "aaaaaaaaaaaaaafb.onion:8333")
 	addNaTest("fd87:d87e:eb43:cd01::bf32:207", 8334, "zuaqaaaaac7teaqh.onion:8334")
 	addNaTest("fd87:d87e:eb43::", 8335, "aaaaaaaaaaaaaaaa.onion:8335")
 	addNaTest("fd87:d87e:eb43:ffff::ffff", 8336, "777qaaaaaaaab777.onion:8336")
+}
+
+func newNetAddress(ip string) *wire.NetAddress {
+	return &wire.NetAddress{
+		Timestamp: time.Now(),
+		Services:  wire.SFNodeNetwork,
+		IP:        net.ParseIP(ip),
+		Port:      8333,
+	}
+}
+
+func randomIPv4Address() *wire.NetAddress {
+	return &wire.NetAddress{
+		Timestamp: time.Now(),
+		Services:  wire.SFNodeNetwork,
+		IP: net.IPv4(
+			byte(rand.Intn(256)), byte(rand.Intn(256)), byte(rand.Intn(256)), byte(rand.Intn(256))),
+		Port: 8333,
+	}
+}
+
+// genAddresses makes a list of numAddr random IPv4 addresses.
+func genAddresses(numAddr int) []*wire.NetAddress {
+	addrs := make([]*wire.NetAddress, numAddr)
+	for i := 0; i < numAddr; i++ {
+		addrs[i] = randomIPv4Address()
+	}
+
+	return addrs
+}
+
+// genAddressesInSequence makes a list of numAddr IPv4 addresses
+// in sequence. All of these addresses will be put in the same bucket.
+func genAddressesInSequence(a, b, c, numAddr byte) []*wire.NetAddress {
+	addrs := make([]*wire.NetAddress, numAddr)
+	var i byte
+	for i = 0; i < numAddr; i++ {
+		addrs[i] = newNetAddress(fmt.Sprint(a, ".", b, ".", c, ".", i))
+	}
+
+	return addrs
 }
 
 func addNaTest(ip string, port uint16, want string) {
@@ -110,7 +152,7 @@ func lookupFunc(host string) ([]net.IP, error) {
 }
 
 // mockLookupFunc takes a map of hosts to ip addresses and returns
-// a lookup function for testing purposes. 
+// a lookup function for testing purposes.
 func mockLookupFunc(m map[string][]net.IP) func(string) ([]net.IP, error) {
 	return func(host string) ([]net.IP, error) {
 		ip := m[host]
@@ -126,8 +168,8 @@ func mockLookupFunc(m map[string][]net.IP) func(string) ([]net.IP, error) {
 // gives errors for invalid inputs.
 func TestDeserializeNetAddress(t *testing.T) {
 	var tests = []struct {
-		input string //The input string. 
-		err    bool   //Whether an error is returned.
+		input string //The input string.
+		err   bool   //Whether an error is returned.
 	}{
 		{
 			"spoon",
@@ -145,7 +187,7 @@ func TestDeserializeNetAddress(t *testing.T) {
 
 	n := addrmgr.New("",
 		mockLookupFunc(map[string][]net.IP{
-			"google.com"	: []net.IP{net.ParseIP("23.34.45.56")}}))
+			"google.com": []net.IP{net.ParseIP("23.34.45.56")}}))
 
 	for _, test := range tests {
 		if _, err := n.DeserializeNetAddress(test.input); (err == nil) == test.err {
@@ -277,6 +319,14 @@ func TestAddLocalAddress(t *testing.T) {
 func TestAttempt(t *testing.T) {
 	n := addrmgr.New("testattempt", lookupFunc)
 
+	// Try an address that has not been added. The function should
+	// return without making an attempt.
+	na := newNetAddress(someIP)
+	n.Attempt(na)
+	if n.NumAddresses() != 0 {
+		t.Errorf("Address manager should be empty.")
+	}
+
 	// Add a new address and get it
 	err := n.AddAddressByIP(someIP + ":8333")
 	if err != nil {
@@ -288,7 +338,7 @@ func TestAttempt(t *testing.T) {
 		t.Errorf("Address should not have attempts, but does")
 	}
 
-	na := ka.NetAddress()
+	na = ka.NetAddress()
 	n.Attempt(na)
 
 	if ka.LastAttempt().IsZero() {
@@ -299,13 +349,21 @@ func TestAttempt(t *testing.T) {
 func TestConnected(t *testing.T) {
 	n := addrmgr.New("testconnected", lookupFunc)
 
+	// Test an address that has not been added. The function should
+	// return without attempting to mark the address as connected.
+	na := newNetAddress(someIP)
+	n.Connected(na)
+	if n.NumAddresses() != 0 {
+		t.Errorf("Address manager should be empty.")
+	}
+
 	// Add a new address and get it
 	err := n.AddAddressByIP(someIP + ":8333")
 	if err != nil {
 		t.Fatalf("Adding address failed: %v", err)
 	}
 	ka := n.GetAddress("any", 100)
-	na := ka.NetAddress()
+	na = ka.NetAddress()
 	na.Timestamp = time.Now().Add(time.Hour * -1) // make it an hour ago
 
 	n.Connected(na)
@@ -323,7 +381,6 @@ func TestNeedMoreAddresses(t *testing.T) {
 		t.Errorf("Expected that we need more addresses")
 	}
 	addrs := make([]*wire.NetAddress, addrsToAdd)
-	now := time.Now()
 
 	var err error
 	for i := 0; i < addrsToAdd; i++ {
@@ -334,12 +391,7 @@ func TestNeedMoreAddresses(t *testing.T) {
 		}
 	}
 
-	srcAddr := &wire.NetAddress{
-		Timestamp: now,
-		Services:  0,
-		IP:        net.IPv4(173, 144, 173, 111),
-		Port:      8333,
-	}
+	srcAddr := newNetAddress("173.144.173.111")
 
 	n.AddAddresses(addrs, srcAddr)
 	numAddrs := n.NumAddresses()
@@ -353,17 +405,55 @@ func TestNeedMoreAddresses(t *testing.T) {
 	}
 }
 
+func TestAddressCache(t *testing.T) {
+	n := addrmgr.New("testaddrcache", lookupFunc)
+	srcAddr := newNetAddress("173.144.173.111")
+	var cache []*wire.NetAddress
+
+	// No addresses have been added.
+	cache = n.AddressCache()
+	if cache != nil {
+		if len(cache) != 0 {
+			t.Error("Address cache should be nil or empty.")
+		}
+	}
+
+	// Some addresses have been added.
+	numAddr := 137
+	addrs := genAddresses(numAddr)
+	n.TstAddAddressesSkipChecks(addrs, srcAddr)
+	expected := n.NumAddresses() * addrmgr.TstGetAddrPercent() / 100
+	cache = n.AddressCache()
+	if cache == nil {
+		t.Error("Address cache should not be nil.")
+	} else if len(cache) != expected {
+		t.Errorf("Address cache should contain %d addresses but it has %d.", expected, len(cache))
+	}
+
+	// More than getAddrMax addresses have been added.
+	numAddr = 5 * addrmgr.TstGetAddrMax()
+	addrs = genAddresses(numAddr)
+	n.TstAddAddressesSkipChecks(addrs, srcAddr)
+	expected = addrmgr.TstGetAddrMax()
+	cache = n.AddressCache()
+	if cache == nil {
+		t.Error("Address cache should not be nil.")
+	} else if len(cache) != expected {
+		t.Errorf("Address cache should contain %d addresses but it has %d.", expected, len(cache))
+	}
+}
+
 func TestHostToNetAddress(t *testing.T) {
-	n := addrmgr.New("", 
+	n := addrmgr.New("",
 		mockLookupFunc(map[string][]net.IP{
-			"google.com"			: []net.IP{net.ParseIP("23.34.45.56")},
-			"facebook.com"			: []net.IP{},
-			"abcdefghijklmnop.onion"	: []net.IP{net.ParseIP("11.33.55.77")},
-			"89abcdefghijklmn.onion"	: []net.IP{net.ParseIP("77.66.55.44")}}))
+			"google.com":             []net.IP{net.ParseIP("23.34.45.56")},
+			"facebook.com":           []net.IP{},
+			"abcdefghijklmnop.onion": []net.IP{net.ParseIP("11.33.55.77")},
+			"89abcdefghijklmn.onion": []net.IP{net.ParseIP("77.66.55.44")}}))
 
 	var tests = []struct {
-		input string  //The input string. 
-		err    bool   //Whether an error is returned.
+		input string // The input string.
+		err   bool   // Whether an error is returned.
 	}{
 		{
 			"google.com",
@@ -398,7 +488,6 @@ func TestGood(t *testing.T) {
 	n := addrmgr.New("testgood", lookupFunc)
 	addrsToAdd := 64 * 64
 	addrs := make([]*wire.NetAddress, addrsToAdd)
-	now := time.Now()
 
 	var err error
 	for i := 0; i < addrsToAdd; i++ {
@@ -409,12 +498,7 @@ func TestGood(t *testing.T) {
 		}
 	}
 
-	srcAddr := &wire.NetAddress{
-		Timestamp: now,
-		Services:  0,
-		IP:        net.IPv4(173, 144, 173, 111),
-		Port:      8333,
-	}
+	srcAddr := newNetAddress("173.144.173.111")
 
 	n.AddAddresses(addrs, srcAddr)
 	for _, addr := range addrs {
@@ -432,8 +516,77 @@ func TestGood(t *testing.T) {
 	}
 }
 
+// Tests some unusual control paths in Good.
+func TestGoodEdgeCases(t *testing.T) {
+	n := addrmgr.New("testgood", lookupFunc)
+	netAddr := newNetAddress("9.8.7.6")
+	ka := addrmgr.TstNewKnownAddress(netAddr,
+		0, time.Now().Add(-30*time.Minute), time.Now(), false, 0)
+	srcAddr := newNetAddress("173.144.173.111")
+
+	// Set an address as good and do it again.
+	n.TstAddKnownAddress(ka, 4)
+	n.Good(netAddr)
+	bucket_before, tried_before := n.GetBucketAndTried(ka)
+	n.Good(netAddr)
+	bucket_after, tried_after := n.GetBucketAndTried(ka)
+	// Address should not have changed positions.
+	if len(bucket_before) != len(bucket_after) ||
+		bucket_before[0] != bucket_after[0] ||
+		tried_before != tried_after {
+		t.Error("An address which is set as good a second time in a row should not be changed.")
+	}
+	// There should be no other addreses either.
+	if n.NumAddresses() != 1 {
+		t.Error("There should be exactly one address.")
+	}
+
+	// Set up an illegal situation where an address is registered
+	// but not in any new bucket.
+	n = addrmgr.New("testgood", lookupFunc)
+	n.TstAddAddressNoBucket(netAddr, srcAddr)
+	n.Good(netAddr)
+	// The address should have been removed.
+	if n.NumAddresses() != 0 {
+		t.Errorf("Did not recover from illegal state. NumAddresses should be zero, got %d.", n.NumAddresses())
+	}
+
+	// Set up a situation in which there is no room in an old
+	// bucket.
+	n = addrmgr.New("testgood", lookupFunc)
+
+	// Make a bunch of addresses, mark them as good and put them
+	// all in a particular bucket.
+	var numAddr byte = 75
+	triedBucket := n.TstGetTriedBucket(netAddr)
+	addrs := genAddressesInSequence(13, 14, 15, numAddr)
+	n.TstAddAddressesSkipChecks(addrs, srcAddr)
+	for _, addr := range addrs {
+		n.TstGoodNoChecks(addr, triedBucket)
+	}
+
+	// Add in more addresses to the new bucket. Now there are 75 in each.
+	addrs = genAddressesInSequence(13, 14, 16, numAddr)
+	n.TstAddAddressesSkipChecks(addrs, srcAddr)
+
+	// Now create a new address to try to mark as good.
+	n.TstAddKnownAddress(
+		addrmgr.TstNewKnownAddress(netAddr,
+			0, time.Now().Add(-30*time.Minute), time.Now(), false, 0), 5)
+
+	// Move the addresses to the tried bucket.
+	n.Good(netAddr)
+
+	if _, tried := n.GetBucketAndTried(ka); !tried {
+		t.Errorf("Address should have been marked as tried.")
+	}
+}
+
 func TestGetAddress(t *testing.T) {
-	n := addrmgr.New("testgetaddress", lookupFunc)
+	var n *addrmgr.AddrManager
+	var ka *addrmgr.KnownAddress
+
+	n = addrmgr.New("testgetaddress", lookupFunc)
 
 	// Get an address from an empty set (should error)
 	if rv := n.GetAddress("any", 10); rv != nil {
@@ -445,7 +598,7 @@ func TestGetAddress(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Adding address failed: %v", err)
 	}
-	ka := n.GetAddress("any", 120) // 100 bias is max, but shouldn't error
+	ka = n.GetAddress("any", 120) // 100 bias is max, but shouldn't error
 	if ka == nil {
 		t.Fatalf("Did not get an address where there is one in the pool")
 	}
@@ -463,9 +616,56 @@ func TestGetAddress(t *testing.T) {
 		t.Errorf("Wrong IP: got %v, want %v", ka.NetAddress().IP.String(), someIP)
 	}
 
+	// In an earlier version of the function, there was a bug which caused it to
+	// loop infiniely if the bias was 100 and there were no new addresses, so
+	// testing that case.
+	ka = n.GetAddress("any", 100)
+	if ka == nil {
+		t.Fatalf("Did not get an address where there is one in the pool")
+	}
+	if ka.NetAddress().IP.String() != someIP {
+		t.Errorf("Wrong IP: got %v, want %v", ka.NetAddress().IP.String(), someIP)
+	}
+
 	numAddrs := n.NumAddresses()
 	if numAddrs != 1 {
 		t.Errorf("Wrong number of addresses: got %d, want %d", numAddrs, 1)
+	}
+
+	//Start over to test a few weird cases.
+	n = addrmgr.New("testgetaddress", lookupFunc)
+	ipA := "9.8.7.6"
+	ipB := "98.76.54.32"
+	netAddrA := newNetAddress(ipA)
+	netAddrB := newNetAddress(ipB)
+
+	n.TstAddKnownAddress(
+		addrmgr.TstNewKnownAddress(netAddrA,
+			28, time.Now().Add(-30*time.Minute), time.Now(), false, 0), 3)
+	n.TstAddKnownAddress(
+		addrmgr.TstNewKnownAddress(netAddrB,
+			10, time.Now().Add(-30*time.Minute), time.Now(), false, 0), 3)
+	ka = n.GetAddress("any", 50)
+
+	if ka == nil {
+		t.Fatalf("Did not get an address where there is one in the pool")
+	}
+	//Note: this test will occaisionally fail with a low probability. There
+	// is a small probability of selecting the incorrect address, but that is
+	// normal behavior for the program.
+	if ka.NetAddress().IP.String() != ipB {
+		t.Errorf("Wrong IP: got %v, want %v", ka.NetAddress().IP.String(), ipB)
+	}
+
+	n.TstGoodNoChecks(netAddrA, 3)
+	n.TstGoodNoChecks(netAddrB, 3)
+
+	ka = n.GetAddress("any", 50)
+	if ka == nil {
+		t.Fatalf("Did not get an address where there is one in the pool")
+	}
+	if ka.NetAddress().IP.String() != ipB {
+		t.Errorf("Wrong IP: got %v, want %v", ka.NetAddress().IP.String(), ipB)
 	}
 }
 
@@ -587,4 +787,64 @@ func TestNetAddressKey(t *testing.T) {
 		}
 	}
 
+}
+
+func TestGetReachabilityFrom(t *testing.T) {
+	const (
+		Unreachable = 0
+		Default     = iota
+		Teredo
+		Ipv6Weak
+		Ipv4
+		Ipv6Strong
+		Private
+	)
+
+	categories := map[int]string{
+		Unreachable: "Unreachable",
+		Default:     "Default",
+		Teredo:      "Teredo",
+		Ipv6Weak:    "Ipv6Weak",
+		Ipv4:        "Ipv4",
+		Ipv6Strong:  "Ipv6Strong",
+		Private:     "Private",
+	}
+
+	test_addresses := []string{
+		"192.168.0.1",        // Unroutable address
+		"172.32.1.1",         // Regular IPv4 address
+		"::ffff:abcd:ef12:1", // Regular IPv6 address
+		"2001::1",            // RFC4380
+		"64:ff9b::1",         // Tunnelled IPv6
+		"fd87:d87e:eb43::a1", // Onion address.
+	}
+
+	expected := [][]int{
+		[]int{Unreachable, Unreachable, Default, Default, Default, Default},
+		[]int{Unreachable, Ipv4, Ipv4, Ipv4, Ipv4, Ipv4},
+		[]int{Unreachable, Unreachable, Ipv6Strong, Ipv6Weak, Ipv6Strong, Default},
+		[]int{Unreachable, Unreachable, Teredo, Teredo, Teredo, Default},
+		[]int{Unreachable, Unreachable, Ipv6Weak, Ipv6Weak, Ipv6Weak, Default},
+		[]int{Unreachable, Unreachable, Ipv6Strong, Ipv6Weak, Ipv6Strong, Private},
+	}
+
+	for i := 0; i < len(test_addresses); i++ {
+		if i >= len(expected) {
+			break
+		}
+
+		for j := 0; j < len(test_addresses); j++ {
+			if j >= len(expected[i]) {
+				break
+			}
+
+			reachability := addrmgr.TstGetReachabilityFrom(
+				newNetAddress(test_addresses[i]), newNetAddress(test_addresses[j]))
+			if reachability != expected[i][j] {
+				t.Errorf("Error routing %s to %s. Got %s expected %s",
+					test_addresses[i], test_addresses[j],
+					categories[reachability], categories[expected[i][j]])
+			}
+		}
+	}
 }
