@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/davecgh/go-spew/spew"
-	"github.com/jimmysong/bmd/wire"
+	"github.com/monetas/bmd/wire"
 )
 
 // TestNetAddress tests the NetAddress API.

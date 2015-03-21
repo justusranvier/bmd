@@ -3,7 +3,7 @@ package wire_test
 import (
 	"testing"
 
-	"github.com/jimmysong/bmd/wire"
+	"github.com/monetas/bmd/wire"
 )
 
 // TestServiceFlagStringer tests the stringized output for service flag types.

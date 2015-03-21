@@ -19,7 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/jimmysong/bmd/wire"
+	"github.com/monetas/bmd/wire"
 )
 
 // AddrManager provides a concurrency safe address manager for caching potential

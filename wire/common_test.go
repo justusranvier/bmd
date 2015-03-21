@@ -10,7 +10,7 @@ import (
 	"encoding/hex"
 
 	"github.com/davecgh/go-spew/spew"
-	"github.com/jimmysong/bmd/wire"
+	"github.com/monetas/bmd/wire"
 )
 
 // fakeRandReader implements the io.Reader interface and is used to force

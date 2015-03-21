@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jimmysong/bmd/addrmgr"
-	"github.com/jimmysong/bmd/wire"
+	"github.com/monetas/bmd/addrmgr"
+	"github.com/monetas/bmd/wire"
 )
 
 // naTest is used to describe a test to be perfomed against the NetAddressKey

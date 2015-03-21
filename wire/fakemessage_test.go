@@ -3,7 +3,7 @@ package wire_test
 import (
 	"io"
 
-	"github.com/jimmysong/bmd/wire"
+	"github.com/monetas/bmd/wire"
 )
 
 // fakeMessage implements the wire.Message interface and is used to force
