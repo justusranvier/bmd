@@ -18,8 +18,8 @@ import (
 	"time"
 
 	"github.com/btcsuite/go-socks/socks"
-	"github.com/jimmysong/bmd/addrmgr"
-	"github.com/jimmysong/bmd/wire"
+	"github.com/monetas/bmd/addrmgr"
+	"github.com/monetas/bmd/wire"
 )
 
 const (
@@ -1329,6 +1329,29 @@ type getAddedNodesMsg struct {
 	reply chan []*peer
 }
 
+// addPeer adds an ip address to the peer handler and adds permanent connections
+// to the set of persistant peers. 
+// This function exists to add initial peers to the address manager before the 
+// peerHandler go routine has entered its main loop. By contrast, AddPeer assumes
+// that the address manager go routines are already in their main loops.
+func (s *server) addPeer(addr string, permanent bool, state *peerState) error {
+	// XXX(oga) duplicate oneshots?
+	if permanent {
+		for e := state.persistentPeers.Front(); e != nil; e = e.Next() {
+			peer := e.Value.(*peer)
+			if peer.addr == addr {
+				return errors.New("peer already connected")
+			}
+		}
+	}
+	// TODO(oga) if too many, nuke a non-perm peer.
+	if s.handleAddPeerMsg(state, newOutboundPeer(s, addr, permanent, 0)) {
+		return nil
+	} else {
+		return errors.New("failed to add peer")
+	}
+}
+
 // handleQuery is the central handler for all queries and commands from other
 // goroutines related to peer state.
 func (s *server) handleQuery(querymsg interface{}, state *peerState) {
@@ -1343,23 +1366,7 @@ func (s *server) handleQuery(querymsg interface{}, state *peerState) {
 		msg.reply <- nconnected
 
 	case addNodeMsg:
-		// XXX(oga) duplicate oneshots?
-		if msg.permanent {
-			for e := state.persistentPeers.Front(); e != nil; e = e.Next() {
-				peer := e.Value.(*peer)
-				if peer.addr == msg.addr {
-					msg.reply <- errors.New("peer already connected")
-					return
-				}
-			}
-		}
-		// TODO(oga) if too many, nuke a non-perm peer.
-		if s.handleAddPeerMsg(state,
-			newOutboundPeer(s, msg.addr, msg.permanent, 0)) {
-			msg.reply <- nil
-		} else {
-			msg.reply <- errors.New("failed to add peer")
-		}
+		msg.reply <- s.addPeer(msg.addr, msg.permanent, state)
 
 	case delNodeMsg:
 		found := false
@@ -1485,16 +1492,16 @@ func (s *server) peerHandler() {
 
 	// TODO: Start up these peers.
 
-	s.AddAddr("23.239.9.147:8444", true)
-	s.AddAddr("98.218.125.214:8444", true)
-	s.AddAddr("192.121.170.162:8444", true)
-	s.AddAddr("108.61.72.12:28444", true)
-	s.AddAddr("158.222.211.81:8080", true)
-	s.AddAddr("79.163.240.110:8446", true)
-	s.AddAddr("178.62.154.250:8444", true)
-	s.AddAddr("178.62.155.6:8444", true)
-	s.AddAddr("178.62.155.8:8444", true)
-	s.AddAddr("68.42.42.120:8444", true)
+	s.addPeer("23.239.9.147:8444", true, state)
+	s.addPeer("98.218.125.214:8444", true, state)
+	s.addPeer("192.121.170.162:8444", true, state)
+	s.addPeer("108.61.72.12:28444", true, state)
+	s.addPeer("158.222.211.81:8080", true, state)
+	s.addPeer("79.163.240.110:8446", true, state)
+	s.addPeer("178.62.154.250:8444", true, state)
+	s.addPeer("178.62.155.6:8444", true, state)
+	s.addPeer("178.62.155.8:8444", true, state)
+	s.addPeer("68.42.42.120:8444", true, state)
 
 	// if nothing else happens, wake us up soon.
 	time.AfterFunc(10*time.Second, func() { s.wakeup <- struct{}{} })
@@ -1771,8 +1778,7 @@ func (s *server) Start() {
 		go s.listenHandler(listener)
 	}
 
-	// Start the peer handler which in turn starts the address and block
-	// managers.
+	// Start the peer handler which in turn starts the address manager.
 	s.wg.Add(1)
 	go s.peerHandler()
 
