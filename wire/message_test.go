@@ -59,8 +59,8 @@ func TestMessage(t *testing.T) {
 		t.Errorf("NewNetAddress: %v", err)
 	}
 	me_expected.Timestamp = time.Time{} // Version message has zero value timestamp.
-	msgVersion := wire.NewMsgVersion(me, you, 123123, []uint64{1})
-	msgVersionExpected := wire.NewMsgVersion(me_expected, you_expected, 123123, []uint64{1})
+	msgVersion := wire.NewMsgVersion(me, you, 123123, []uint32{1})
+	msgVersionExpected := wire.NewMsgVersion(me_expected, you_expected, 123123, []uint32{1})
 
 	msgVerack := wire.NewMsgVerAck()
 	msgAddr := wire.NewMsgAddr()

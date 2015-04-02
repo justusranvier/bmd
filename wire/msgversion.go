@@ -51,7 +51,7 @@ type MsgVersion struct {
 	UserAgent string
 
 	// The stream numbers of interest.
-	StreamNumbers []uint64
+	StreamNumbers []uint32
 }
 
 // HasService returns whether the specified service is supported by the peer
@@ -113,9 +113,11 @@ func (msg *MsgVersion) Decode(r io.Reader) error {
 		return fmt.Errorf("number of streams is too large: %v", streamLen)
 	}
 
-	msg.StreamNumbers = make([]uint64, int(streamLen))
+	msg.StreamNumbers = make([]uint32, int(streamLen))
+	var n uint64
 	for i := uint64(0); i < streamLen; i++ {
-		msg.StreamNumbers[i], err = readVarInt(r)
+		n, err = readVarInt(r)
+		msg.StreamNumbers[i] = uint32(n)
 		if err != nil {
 			return err
 		}
@@ -168,7 +170,7 @@ func (msg *MsgVersion) Encode(w io.Writer) error {
 	}
 
 	for _, stream := range msg.StreamNumbers {
-		err = writeVarInt(w, stream)
+		err = writeVarInt(w, uint64(stream))
 		if err != nil {
 			return err
 		}
@@ -200,7 +202,7 @@ func (msg *MsgVersion) MaxPayloadLength() int {
 // NewMsgVersion returns a new bitmessage version message that conforms to the
 // Message interface using the passed parameters and defaults for the remaining
 // fields.
-func NewMsgVersion(me *NetAddress, you *NetAddress, nonce uint64, streams []uint64) *MsgVersion {
+func NewMsgVersion(me *NetAddress, you *NetAddress, nonce uint64, streams []uint32) *MsgVersion {
 	return &MsgVersion{
 		ProtocolVersion: int32(3),
 		Services:        0,
@@ -216,7 +218,7 @@ func NewMsgVersion(me *NetAddress, you *NetAddress, nonce uint64, streams []uint
 // NewMsgVersionFromConn is a convenience function that extracts the remote
 // and local address from conn and returns a new bitmessage version message that
 // conforms to the Message interface.  See NewMsgVersion.
-func NewMsgVersionFromConn(conn net.Conn, nonce uint64, currentStream uint32, allStreams []uint64) (*MsgVersion, error) {
+func NewMsgVersionFromConn(conn net.Conn, nonce uint64, currentStream uint32, allStreams []uint32) (*MsgVersion, error) {
 
 	// Don't assume any services until we know otherwise.
 	lna, err := NewNetAddress(conn.LocalAddr(), currentStream, 0)

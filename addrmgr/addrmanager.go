@@ -515,7 +515,9 @@ func (a *AddrManager) DeserializeNetAddress(addr string) (*wire.NetAddress, erro
 		return nil, err
 	}
 
-	return a.HostToNetAddress(host, uint16(port), wire.SFNodeNetwork)
+	// Hard-coded stream 1 in here. In the future when we support streams,
+	// we will want to update this.
+	return a.HostToNetAddress(host, uint16(port), 1, wire.SFNodeNetwork)
 }
 
 // Start begins the core address handler which manages a pool of known
@@ -666,7 +668,7 @@ func (a *AddrManager) reset() {
 // HostToNetAddress returns a netaddress given a host address. If the address is
 // a tor .onion address this will be taken care of. else if the host is not an
 // IP address it will be resolved (via tor if required).
-func (a *AddrManager) HostToNetAddress(host string, port uint16, services wire.ServiceFlag) (*wire.NetAddress, error) {
+func (a *AddrManager) HostToNetAddress(host string, port uint16, stream uint32, services wire.ServiceFlag) (*wire.NetAddress, error) {
 	// tor address is 16 char base32 + ".onion"
 	var ip net.IP
 	if len(host) == 22 && host[16:] == ".onion" {
@@ -691,7 +693,7 @@ func (a *AddrManager) HostToNetAddress(host string, port uint16, services wire.S
 		ip = ips[0]
 	}
 
-	return wire.NewNetAddressIPPort(ip, port, services), nil
+	return wire.NewNetAddressIPPort(ip, port, stream, services), nil
 }
 
 // ipString returns a string for the ip from the provided NetAddress. If the
