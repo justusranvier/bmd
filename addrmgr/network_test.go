@@ -31,7 +31,7 @@ func TestIPTypes(t *testing.T) {
 		valid    bool
 		routable bool
 		ipv4     bool
-                onion    bool
+		onion    bool
 	}
 
 	newIPTest := func(ip string, rfc1918, rfc2544, rfc3849, rfc3927, rfc3964,
@@ -145,7 +145,7 @@ func TestIPTypes(t *testing.T) {
 		if rv := addrmgr.IsRoutable(&test.in); rv != test.routable {
 			t.Errorf("IsRoutable %s\n got: %v want: %v", test.in.IP, rv, test.routable)
 		}
-		
+
 		if rv := addrmgr.IsIPv4(&test.in); rv != test.ipv4 {
 			t.Errorf("IsIpv4 %s\n got: %v want: %v", test.in.IP, rv, test.ipv4)
 		}

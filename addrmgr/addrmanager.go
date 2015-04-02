@@ -284,7 +284,7 @@ func (a *AddrManager) pickTried(bucket int) *list.Element {
 }
 
 func (a *AddrManager) getNewBucket(netAddr, srcAddr *wire.NetAddress) int {
-	// bitmessaged:
+	// XXX bitcoind:
 	// doublesha256(key + sourcegroup + int64(doublesha256(key + group + sourcegroup))%bucket_per_source_group) % num_new_buckets
 
 	data1 := []byte{}
@@ -306,7 +306,7 @@ func (a *AddrManager) getNewBucket(netAddr, srcAddr *wire.NetAddress) int {
 }
 
 func (a *AddrManager) getTriedBucket(netAddr *wire.NetAddress) int {
-	// bitmessaged hashes this as:
+	// XXX bitcoind hashes this as:
 	// doublesha256(key + group + truncate_to_64bits(doublesha256(key)) % buckets_per_group) % num_buckets
 	data1 := []byte{}
 	data1 = append(data1, a.key[:]...)
@@ -418,7 +418,6 @@ func (a *AddrManager) loadPeers() {
 }
 
 func (a *AddrManager) deserializePeers(filePath string) error {
-
 	_, err := os.Stat(filePath)
 	if os.IsNotExist(err) {
 		return nil
@@ -741,7 +740,9 @@ func (a *AddrManager) GetAddress(class string, newBias int) *KnownAddress {
 		(100.0 - float64(newBias))
 	newCorrelation := math.Sqrt(float64(a.nNew)) * float64(newBias)
 
-	if ((newCorrelation + triedCorrelation) * a.rand.Float64()) <
+	// If there are tried vectors but no new vectors, automatically select from tried
+	// vectors. Otherwise choose which to select from according to the random rule.
+	if a.nNew == 0 || ((newCorrelation+triedCorrelation)*a.rand.Float64()) <
 		triedCorrelation {
 		// Tried entry.
 		large := 1 << 30
@@ -817,7 +818,7 @@ func (a *AddrManager) Attempt(addr *wire.NetAddress) {
 }
 
 // Connected Marks the given address as currently connected and working at the
-// current time.  The address must already be known to AddrManager else it will
+// current time. The address must already be known to AddrManager else it will
 // be ignored.
 func (a *AddrManager) Connected(addr *wire.NetAddress) {
 	a.mtx.Lock()
@@ -896,7 +897,8 @@ func (a *AddrManager) Good(addr *wire.NetAddress) {
 		return
 	}
 
-	// No room, we have to evict something else.
+	// No room, we have to evict something else. We replace the addr's
+	// space in its previous bucket with a random address.
 	entry := a.pickTried(bucket)
 	rmka := entry.Value.(*KnownAddress)
 

@@ -266,7 +266,7 @@ func GroupKey(na *wire.NetAddress) string {
 	}
 
 	// OK, so now we know ourselves to be a IPv6 address.
-	// bitcoind uses /32 for everything, except for Hurricane Electric's
+	// XXX bitcoind uses /32 for everything, except for Hurricane Electric's
 	// (he.net) IP range, which it uses /36 for.
 	bits := 32
 	if heNet.Contains(na.IP) {
