@@ -7,9 +7,10 @@ import (
 )
 
 const (
-	// Starting in version 4, Ripe is derived from the tag and not
-	// sent directly
-	TagBasedRipeVersion = 4
+	// TagGetPubKeyVersion specifies the version of MsgGetPubKey from which
+	// tags started being encoded in messages and not ripe. This was done to
+	// thwart any public key/address harvesting attempts.
+	TagGetPubKeyVersion = 4
 )
 
 type MsgGetPubKey struct {
@@ -46,8 +47,8 @@ func (msg *MsgGetPubKey) Decode(r io.Reader) error {
 		return err
 	}
 
-	if msg.Version >= TagBasedRipeVersion {
-		msg.Tag, _ = NewShaHash(make([]byte, 32))
+	if msg.Version >= TagGetPubKeyVersion {
+		msg.Tag, _ = NewShaHash(make([]byte, HashSize))
 		if err = readElement(r, msg.Tag); err != nil {
 			return err
 		}
@@ -77,7 +78,7 @@ func (msg *MsgGetPubKey) Encode(w io.Writer) error {
 		return err
 	}
 
-	if msg.Version >= TagBasedRipeVersion {
+	if msg.Version >= TagGetPubKeyVersion {
 		if err = writeElement(w, msg.Tag); err != nil {
 			return err
 		}
@@ -90,16 +91,16 @@ func (msg *MsgGetPubKey) Encode(w io.Writer) error {
 	return err
 }
 
-// Command returns the protocol command string for the message.  This is part
+// Command returns the protocol command string for the message. This is part
 // of the Message interface implementation.
 func (msg *MsgGetPubKey) Command() string {
 	return CmdObject
 }
 
 // MaxPayloadLength returns the maximum length the payload can be for the
-// receiver.  This is part of the Message interface implementation.
-func (msg *MsgGetPubKey) MaxPayloadLength() uint32 {
-	return 1 << 18
+// receiver. This is part of the Message interface implementation.
+func (msg *MsgGetPubKey) MaxPayloadLength() int {
+	return 70
 }
 
 func (msg *MsgGetPubKey) String() string {

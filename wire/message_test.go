@@ -35,20 +35,34 @@ func TestMessage(t *testing.T) {
 
 	// MsgVersion.
 	addrYou := &net.TCPAddr{IP: net.ParseIP("192.168.0.1"), Port: 8333}
-	you, err := wire.NewNetAddress(addrYou, wire.SFNodeNetwork)
+	you, err := wire.NewNetAddress(addrYou, 1, wire.SFNodeNetwork)
 	if err != nil {
 		t.Errorf("NewNetAddress: %v", err)
 	}
 	you.Timestamp = time.Time{} // Version message has zero value timestamp.
 	addrMe := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 8333}
-	me, err := wire.NewNetAddress(addrMe, wire.SFNodeNetwork)
+	me, err := wire.NewNetAddress(addrMe, 1, wire.SFNodeNetwork)
 	if err != nil {
 		t.Errorf("NewNetAddress: %v", err)
 	}
+	// A version message that is decoded comes out a little different than
+	// the original data structure, so we need to create a slightly different
+	// message to test against.
 	me.Timestamp = time.Time{} // Version message has zero value timestamp.
+	you_expected, err := wire.NewNetAddress(addrYou, 0, wire.SFNodeNetwork)
+	if err != nil {
+		t.Errorf("NewNetAddress: %v", err)
+	}
+	you_expected.Timestamp = time.Time{} // Version message has zero value timestamp.
+	me_expected, err := wire.NewNetAddress(addrMe, 0, wire.SFNodeNetwork)
+	if err != nil {
+		t.Errorf("NewNetAddress: %v", err)
+	}
+	me_expected.Timestamp = time.Time{} // Version message has zero value timestamp.
 	msgVersion := wire.NewMsgVersion(me, you, 123123, []uint64{1})
+	msgVersionExpected := wire.NewMsgVersion(me_expected, you_expected, 123123, []uint64{1})
+
 	msgVerack := wire.NewMsgVerAck()
-	msgGetAddr := wire.NewMsgGetAddr()
 	msgAddr := wire.NewMsgAddr()
 	msgInv := wire.NewMsgInv()
 	msgGetData := wire.NewMsgGetData()
@@ -86,9 +100,8 @@ func TestMessage(t *testing.T) {
 		bmnet wire.BitmessageNet // Network to use for wire.encoding
 		bytes int                // Expected num bytes read/written
 	}{
-		{msgVersion, msgVersion, wire.MainNet, 119},
+		{msgVersion, msgVersionExpected, wire.MainNet, 119},
 		{msgVerack, msgVerack, wire.MainNet, 24},
-		{msgGetAddr, msgGetAddr, wire.MainNet, 24},
 		{msgAddr, msgAddr, wire.MainNet, 25},
 		{msgInv, msgInv, wire.MainNet, 25},
 		{msgGetData, msgGetData, wire.MainNet, 25},
@@ -187,18 +200,23 @@ func TestReadMessageWireErrors(t *testing.T) {
 	// Wire encoded bytes for a message that exceeds max overall message
 	// length.
 	mpl := uint32(wire.MaxMessagePayload)
-	exceedMaxPayloadBytes := makeHeader(bmnet, "getaddr", mpl+1, 0)
+	exceedMaxPayloadBytes := makeHeader(bmnet, "addr", mpl+1, 0)
 
 	// Wire encoded bytes for a command which is invalid utf-8.
 	badCommandBytes := makeHeader(bmnet, "bogus", 0, 0)
 	badCommandBytes[4] = 0x81
+
+	// A second test of bad command bytes to test discardInput.
+	badCommandBytes2 := makeHeader(bmnet, "spoon", 12000, 0)
+	badCommandBytes2[4] = 0x81
+	badCommandBytes2 = append(badCommandBytes2, 0x1)
 
 	// Wire encoded bytes for a command which is valid, but not supported.
 	unsupportedCommandBytes := makeHeader(bmnet, "bogus", 0, 0)
 
 	// Wire encoded bytes for a message which exceeds the max payload for
 	// a specific message type.
-	exceedTypePayloadBytes := makeHeader(bmnet, "getaddr", 1, 0)
+	exceedTypePayloadBytes := makeHeader(bmnet, "verack", 1, 0)
 
 	// Wire encoded bytes for a message which does not deliver the full
 	// payload according to the header length.
@@ -286,6 +304,15 @@ func TestReadMessageWireErrors(t *testing.T) {
 			24,
 		},
 
+		// Invalid UTF-8 command to test discardInput.
+		{
+			badCommandBytes2,
+			bmnet,
+			len(badCommandBytes2),
+			&wire.MessageError{},
+			24,
+		},
+
 		// Valid, but unsupported command.
 		{
 			unsupportedCommandBytes,
@@ -300,7 +327,7 @@ func TestReadMessageWireErrors(t *testing.T) {
 			exceedTypePayloadBytes,
 			bmnet,
 			len(exceedTypePayloadBytes),
-			&wire.MessageError{},
+			io.EOF,
 			24,
 		},
 
@@ -331,12 +358,12 @@ func TestReadMessageWireErrors(t *testing.T) {
 			25,
 		},
 
-		// 15k bytes of data to discard.
+		// 15k bytes of data
 		{
 			discardBytes,
 			bmnet,
 			len(discardBytes),
-			&wire.MessageError{},
+			io.EOF,
 			24,
 		},
 

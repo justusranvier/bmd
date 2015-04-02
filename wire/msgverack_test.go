@@ -20,7 +20,7 @@ func TestVerAck(t *testing.T) {
 	}
 
 	// Ensure max payload is expected value.
-	wantPayload := uint32(0)
+	wantPayload := 0
 	maxPayload := msg.MaxPayloadLength()
 	if maxPayload != wantPayload {
 		t.Errorf("MaxPayloadLength: wrong max payload length for "+
@@ -39,7 +39,7 @@ func TestVerAckWire(t *testing.T) {
 	tests := []struct {
 		in  *wire.MsgVerAck // Message to encode
 		out *wire.MsgVerAck // Expected decoded message
-		buf []byte            // Wire encoding
+		buf []byte          // Wire encoding
 	}{
 		// Latest protocol version.
 		{

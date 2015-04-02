@@ -11,7 +11,7 @@ import (
 // TestPubKey tests the PubKey API.
 func TestPubKeyH(t *testing.T) {
 
-	pubKeyStr := "14a0810ac680a3eb3f82edc814a0810ac680a3eb3f82edc814a0810ac680a3eb3f82edc8473883a8"
+	pubKeyStr := "3f554c24e91da07b257b73c87338653c6009943b62e43161e326de7b73f19ebf87201ea1a68e87edb95961d603b80eb13de1d8c4865a99fcee8fb6b92fe65699"
 	pubKey, err := wire.NewPubKeyFromStr(pubKeyStr)
 	if err != nil {
 		t.Errorf("NewPubKeyFromStr: %v", err)
@@ -28,41 +28,35 @@ func TestPubKeyH(t *testing.T) {
 		0x39, 0xd2, 0x71, 0x3a, 0x54, 0x6e, 0xc7, 0xc8,
 	}
 
-	hash, err := wire.NewPubKey(buf)
+	pubkey, err := wire.NewPubKey(buf)
 	if err != nil {
 		t.Errorf("NewPubKey: unexpected error %v", err)
 	}
 
 	// Ensure proper size.
-	if len(hash) != wire.PubKeySize {
-		t.Errorf("NewPubKey: hash length mismatch - got: %v, want: %v",
-			len(hash), wire.PubKeySize)
+	if len(pubkey) != wire.PubKeySize {
+		t.Errorf("NewPubKey: pubkey length mismatch - got: %v, want: %v",
+			len(pubkey), wire.PubKeySize)
 	}
 
 	// Ensure contents match.
-	if !bytes.Equal(hash[:], buf) {
-		t.Errorf("NewPubKey: hash contents mismatch - got: %v, want: %v",
-			hash[:], buf)
-	}
-
-	// Ensure contents of hash of block 234440 don't match 234439.
-	if hash.IsEqual(pubKey) {
-		t.Errorf("IsEqual: hash contents should not match - got: %v, want: %v",
-			hash, pubKey)
+	if !bytes.Equal(pubkey[:], buf) {
+		t.Errorf("NewPubKey: pubkey contents mismatch - got: %v, want: %v",
+			pubkey[:], buf)
 	}
 
 	// Set hash from byte slice and ensure contents match.
-	err = hash.SetBytes(pubKey.Bytes())
+	err = pubkey.SetBytes(pubKey.Bytes())
 	if err != nil {
 		t.Errorf("SetBytes: %v", err)
 	}
-	if !hash.IsEqual(pubKey) {
-		t.Errorf("IsEqual: hash contents mismatch - got: %v, want: %v",
-			hash, pubKey)
+	if !pubkey.IsEqual(pubKey) {
+		t.Errorf("IsEqual: pubkey contents mismatch - got: %v, want: %v",
+			pubkey, pubKey)
 	}
 
 	// Invalid size for SetBytes.
-	err = hash.SetBytes([]byte{0x00})
+	err = pubkey.SetBytes([]byte{0x00})
 	if err == nil {
 		t.Errorf("SetBytes: failed to received expected err - got: nil")
 	}
@@ -77,8 +71,8 @@ func TestPubKeyH(t *testing.T) {
 
 // TestPubKeyString  tests the stringized output for sha hashes.
 func TestPubKeyString(t *testing.T) {
-	wantStr := "d2b00432346c3f1f3986da1afd33e506d2b00432346c3f1f3986da1afd33e506d2b00432346c3f1f3986da1afd33e506d2b00432346c3f1f3986da1afd33e506"
-	hash := wire.PubKey([wire.PubKeySize]byte{ // Make go vet happy.
+	wantStr := "06e533fd1ada86391f3f6c343204b0d206e533fd1ada86391f3f6c343204b0d206e533fd1ada86391f3f6c343204b0d206e533fd1ada86391f3f6c343204b0d2"
+	pubkey := wire.PubKey([wire.PubKeySize]byte{ // Make go vet happy.
 		0x06, 0xe5, 0x33, 0xfd, 0x1a, 0xda, 0x86, 0x39,
 		0x1f, 0x3f, 0x6c, 0x34, 0x32, 0x04, 0xb0, 0xd2,
 		0x06, 0xe5, 0x33, 0xfd, 0x1a, 0xda, 0x86, 0x39,
@@ -89,10 +83,10 @@ func TestPubKeyString(t *testing.T) {
 		0x1f, 0x3f, 0x6c, 0x34, 0x32, 0x04, 0xb0, 0xd2,
 	})
 
-	hashStr := hash.String()
-	if hashStr != wantStr {
-		t.Errorf("String: wrong hash string - got %v, want %v",
-			hashStr, wantStr)
+	pubkeyStr := pubkey.String()
+	if pubkeyStr != wantStr {
+		t.Errorf("String: wrong pubkey string - got %v, want %v",
+			pubkeyStr, wantStr)
 	}
 }
 
@@ -107,10 +101,10 @@ func TestNewPubKeyFromStr(t *testing.T) {
 		{
 			"",
 			wire.PubKey{},
-			nil,
+			wire.ErrPubKeyStrSize,
 		},
 
-		// Single digit hash.
+		// Single digit pubkey.
 		{
 			"1",
 			wire.PubKey([wire.PubKeySize]byte{ // Make go vet happy.
@@ -123,15 +117,20 @@ func TestNewPubKeyFromStr(t *testing.T) {
 				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 			}),
-			nil,
+			wire.ErrPubKeyStrSize,
 		},
 
 		{
-			"a60840790ba1d475d01367e7c723da941069e9dc",
+			"3cb827da3ad158bc13143349f6cac62d0c74c035f88bb63f1f7fd5dd352e1c626c3c809ab2ae71da6622a16749188295151cb91667d77bf72be88848291fdd0a",
 			wire.PubKey([wire.PubKeySize]byte{ // Make go vet happy.
-				0xdc, 0xe9, 0x69, 0x10, 0x94, 0xda, 0x23, 0xc7,
-				0xe7, 0x67, 0x13, 0xd0, 0x75, 0xd4, 0xa1, 0x0b,
-				0x79, 0x40, 0x08, 0xa6,
+				0x3C, 0xB8, 0x27, 0xDA, 0x3A, 0xD1, 0x58, 0xBC,
+				0x13, 0x14, 0x33, 0x49, 0xF6, 0xCA, 0xC6, 0x2D,
+				0x0C, 0x74, 0xC0, 0x35, 0xF8, 0x8B, 0xB6, 0x3F,
+				0x1F, 0x7F, 0xD5, 0xDD, 0x35, 0x2E, 0x1C, 0x62,
+				0x6C, 0x3C, 0x80, 0x9A, 0xB2, 0xAE, 0x71, 0xDA,
+				0x66, 0x22, 0xA1, 0x67, 0x49, 0x18, 0x82, 0x95,
+				0x15, 0x1C, 0xB9, 0x16, 0x67, 0xD7, 0x7B, 0xF7,
+				0x2B, 0xE8, 0x88, 0x48, 0x29, 0x1F, 0xDD, 0x0A,
 			}),
 			nil,
 		},
@@ -145,7 +144,7 @@ func TestNewPubKeyFromStr(t *testing.T) {
 
 		// Pub Key that is contains non-hex chars.
 		{
-			"abcdefg",
+			"3gb827da3ad158bc13143349f6cac62d0c74c035f88bb63f1f7fd5dd352e1c626c3c809ab2ae71da6622a16749188295151cb91667d77bf72be88848291fdd0a",
 			wire.PubKey{},
 			hex.InvalidByteError('g'),
 		},

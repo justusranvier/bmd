@@ -2,6 +2,7 @@ package wire_test
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"net"
 	"reflect"
@@ -19,12 +20,12 @@ func TestVersion(t *testing.T) {
 
 	// Create version message data.
 	tcpAddrMe := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 8333}
-	me, err := wire.NewNetAddress(tcpAddrMe, wire.SFNodeNetwork)
+	me, err := wire.NewNetAddress(tcpAddrMe, 1, wire.SFNodeNetwork)
 	if err != nil {
 		t.Errorf("NewNetAddress: %v", err)
 	}
 	tcpAddrYou := &net.TCPAddr{IP: net.ParseIP("192.168.0.1"), Port: 8333}
-	you, err := wire.NewNetAddress(tcpAddrYou, wire.SFNodeNetwork)
+	you, err := wire.NewNetAddress(tcpAddrYou, 1, wire.SFNodeNetwork)
 	if err != nil {
 		t.Errorf("NewNetAddress: %v", err)
 	}
@@ -39,11 +40,11 @@ func TestVersion(t *testing.T) {
 		t.Errorf("NewMsgVersion: wrong protocol version - got %v, want %v",
 			msg.ProtocolVersion, pver)
 	}
-	if !reflect.DeepEqual(&msg.AddrMe, me) {
+	if !reflect.DeepEqual(msg.AddrMe, me) {
 		t.Errorf("NewMsgVersion: wrong me address - got %v, want %v",
 			spew.Sdump(&msg.AddrMe), spew.Sdump(me))
 	}
-	if !reflect.DeepEqual(&msg.AddrYou, you) {
+	if !reflect.DeepEqual(msg.AddrYou, you) {
 		t.Errorf("NewMsgVersion: wrong you address - got %v, want %v",
 			spew.Sdump(&msg.AddrYou), spew.Sdump(you))
 	}
@@ -112,12 +113,11 @@ func TestVersion(t *testing.T) {
 	// Ensure max payload is expected value.
 	// Protocol version 4 bytes + services 8 bytes + timestamp 8 bytes +
 	// remote and local net addresses + nonce 8 bytes + length of user agent
-	// (varInt) + max allowed user agent length + last block 4 bytes +
-	// relay transactions flag 1 byte.
-	wantPayload := uint32(2102)
+	// (varInt) + max allowed user agent length + 1 stream number
+	wantPayload := 5085
 	maxPayload := msg.MaxPayloadLength()
 	if maxPayload != wantPayload {
-		t.Errorf("MaxPayloadLength: wrong max payload length for "+
+		t.Errorf("MaxPayloadLength: wrong max payload length "+
 			"got %v, want %v", maxPayload, wantPayload)
 	}
 
@@ -133,7 +133,7 @@ func TestVersion(t *testing.T) {
 
 	// Use a fake connection.
 	conn := &fakeConn{localAddr: tcpAddrMe, remoteAddr: tcpAddrYou}
-	msg, err = wire.NewMsgVersionFromConn(conn, nonce, []uint64{1})
+	msg, err = wire.NewMsgVersionFromConn(conn, nonce, 1, []uint64{1})
 	if err != nil {
 		t.Errorf("NewMsgVersionFromConn: %v", err)
 	}
@@ -153,7 +153,7 @@ func TestVersion(t *testing.T) {
 		localAddr:  &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 8333},
 		remoteAddr: tcpAddrYou,
 	}
-	msg, err = wire.NewMsgVersionFromConn(conn, nonce, []uint64{1})
+	msg, err = wire.NewMsgVersionFromConn(conn, nonce, 1, []uint64{1})
 	if err != wire.ErrInvalidNetAddr {
 		t.Errorf("NewMsgVersionFromConn: expected error not received "+
 			"- got %v, want %v", err, wire.ErrInvalidNetAddr)
@@ -164,7 +164,7 @@ func TestVersion(t *testing.T) {
 		localAddr:  tcpAddrMe,
 		remoteAddr: &net.UDPAddr{IP: net.ParseIP("192.168.0.1"), Port: 8333},
 	}
-	msg, err = wire.NewMsgVersionFromConn(conn, nonce, []uint64{1})
+	msg, err = wire.NewMsgVersionFromConn(conn, nonce, 1, []uint64{1})
 	if err != wire.ErrInvalidNetAddr {
 		t.Errorf("NewMsgVersionFromConn: expected error not received "+
 			"- got %v, want %v", err, wire.ErrInvalidNetAddr)
@@ -286,6 +286,10 @@ func TestVersionWireErrors(t *testing.T) {
 		{baseVersion, baseVersionEncoded, 97, io.ErrShortWrite, io.EOF},
 		// Force error in stream number.
 		{baseVersion, baseVersionEncoded, 98, io.ErrShortWrite, io.EOF},
+		// Force error for too many streams.
+		{tooManyStreamsVersion, tooManyStreamsVersionEncoded, 300,
+			fmt.Errorf("number of streams is too large: %v", 2),
+			fmt.Errorf("number of streams is too large: %v", 2)},
 	}
 
 	t.Logf("Running %d tests", len(tests))
@@ -302,7 +306,8 @@ func TestVersionWireErrors(t *testing.T) {
 		// For errors which are not of type wire.MessageError, check
 		// them for equality.
 		if _, ok := err.(*wire.MessageError); !ok {
-			if err != test.writeErr {
+			//if !reflect.DeepEqual(err, test.readErr) {
+			if err != test.writeErr && !reflect.DeepEqual(err, test.readErr) {
 				t.Errorf("Encode #%d wrong error got: %v, "+
 					"want: %v", i, err, test.writeErr)
 				continue
@@ -311,7 +316,12 @@ func TestVersionWireErrors(t *testing.T) {
 
 		// Decode from wire.format.
 		var msg wire.MsgVersion
-		buf := bytes.NewBuffer(test.buf[0:test.max])
+		var buf io.Reader
+		if test.max > len(test.buf) {
+			buf = bytes.NewBuffer(test.buf[:])
+		} else {
+			buf = bytes.NewBuffer(test.buf[0:test.max])
+		}
 		err = msg.Decode(buf)
 		if reflect.TypeOf(err) != reflect.TypeOf(test.readErr) {
 			t.Errorf("Decode #%d wrong error got: %v, want: %v",
@@ -322,7 +332,7 @@ func TestVersionWireErrors(t *testing.T) {
 		// For errors which are not of type wire.MessageError, check
 		// them for equality.
 		if _, ok := err.(*wire.MessageError); !ok {
-			if err != test.readErr {
+			if !reflect.DeepEqual(err, test.readErr) {
 				t.Errorf("Decode #%d wrong error got: %v, "+
 					"want: %v", i, err, test.readErr)
 				continue
@@ -336,14 +346,16 @@ var baseVersion = &wire.MsgVersion{
 	ProtocolVersion: 3,
 	Services:        wire.SFNodeNetwork,
 	Timestamp:       time.Unix(0x495fab29, 0), // 2009-01-03 12:15:05 -0600 CST)
-	AddrYou: wire.NetAddress{
+	AddrYou: &wire.NetAddress{
 		Timestamp: time.Time{}, // Zero value -- no timestamp in version
+		Stream:    0,           // Zero value -- no stream in version
 		Services:  wire.SFNodeNetwork,
 		IP:        net.ParseIP("192.168.0.1"),
 		Port:      8333,
 	},
-	AddrMe: wire.NetAddress{
+	AddrMe: &wire.NetAddress{
 		Timestamp: time.Time{}, // Zero value -- no timestamp in version
+		Stream:    0,           // Zero value -- no stream in version
 		Services:  wire.SFNodeNetwork,
 		IP:        net.ParseIP("127.0.0.1"),
 		Port:      8333,
@@ -373,4 +385,50 @@ var baseVersionEncoded = []byte{
 	0x2f, 0x77, 0x69, 0x72, 0x65, 0x74, 0x65, 0x73,
 	0x74, 0x3a, 0x30, 0x2e, 0x30, 0x2e, 0x31, 0x2f, // User agent
 	0x01, 0x01, // Stream Numbers
+}
+
+// tooManyStreamsVersion is used to test a version message with too many streams.
+var tooManyStreamsVersion = &wire.MsgVersion{
+	ProtocolVersion: 3,
+	Services:        wire.SFNodeNetwork,
+	Timestamp:       time.Unix(0x495fab29, 0), // 2009-01-03 12:15:05 -0600 CST)
+	AddrYou: &wire.NetAddress{
+		Timestamp: time.Time{}, // Zero value -- no timestamp in version
+		Stream:    0,           // Zero value -- no stream in version
+		Services:  wire.SFNodeNetwork,
+		IP:        net.ParseIP("192.168.0.1"),
+		Port:      8333,
+	},
+	AddrMe: &wire.NetAddress{
+		Timestamp: time.Time{}, // Zero value -- no timestamp in version
+		Stream:    0,           // Zero value -- no stream in version
+		Services:  wire.SFNodeNetwork,
+		IP:        net.ParseIP("127.0.0.1"),
+		Port:      8333,
+	},
+	Nonce:         123123, // 0x1e0f3
+	UserAgent:     "/wiretest:0.0.1/",
+	StreamNumbers: []uint64{1, 2},
+}
+
+// tooManyStreamsVersionEncoded is the wire.encoded bytes for tooManyStreamsVersion
+var tooManyStreamsVersionEncoded = []byte{
+	0x00, 0x00, 0x00, 0x03, // Protocol version 3
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, // SFNodeNetwork
+	0x00, 0x00, 0x00, 0x00, 0x49, 0x5f, 0xab, 0x29, // 64-bit Timestamp
+	// AddrYou -- No timestamp for NetAddress in version message
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, // SFNodeNetwork
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0xff, 0xff, 0xc0, 0xa8, 0x00, 0x01, // IP 192.168.0.1
+	0x20, 0x8d, // Port 8333 in big-endian
+	// AddrMe -- No timestamp for NetAddress in version message
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, // SFNodeNetwork
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0xff, 0xff, 0x7f, 0x00, 0x00, 0x01, // IP 127.0.0.1
+	0x20, 0x8d, // Port 8333 in big-endian
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0xe0, 0xf3, // Nonce
+	0x10, // Varint for user agent length
+	0x2f, 0x77, 0x69, 0x72, 0x65, 0x74, 0x65, 0x73,
+	0x74, 0x3a, 0x30, 0x2e, 0x30, 0x2e, 0x31, 0x2f, // User agent
+	0x02, 0x01, 0x02, // Stream Numbers
 }

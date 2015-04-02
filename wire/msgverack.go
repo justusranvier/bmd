@@ -31,7 +31,7 @@ func (msg *MsgVerAck) Command() string {
 
 // MaxPayloadLength returns the maximum length the payload can be for the
 // receiver.  This is part of the Message interface implementation.
-func (msg *MsgVerAck) MaxPayloadLength() uint32 {
+func (msg *MsgVerAck) MaxPayloadLength() int {
 	return 0
 }
 

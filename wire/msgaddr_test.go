@@ -24,7 +24,7 @@ func TestAddr(t *testing.T) {
 
 	// Ensure max payload is expected value for latest protocol version.
 	// Num addresses (varInt) + max allowed addresses.
-	wantPayload := uint32(30009)
+	wantPayload := 38003
 	maxPayload := msg.MaxPayloadLength()
 	if maxPayload != wantPayload {
 		t.Errorf("MaxPayloadLength: wrong max payload length for "+
@@ -33,7 +33,7 @@ func TestAddr(t *testing.T) {
 
 	// Ensure NetAddresses are added properly.
 	tcpAddr := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 8333}
-	na, err := wire.NewNetAddress(tcpAddr, wire.SFNodeNetwork)
+	na, err := wire.NewNetAddress(tcpAddr, 1, wire.SFNodeNetwork)
 	if err != nil {
 		t.Errorf("NewNetAddress: %v", err)
 	}
@@ -81,12 +81,14 @@ func TestAddrWire(t *testing.T) {
 		Services:  wire.SFNodeNetwork,
 		IP:        net.ParseIP("127.0.0.1"),
 		Port:      8333,
+		Stream:    1,
 	}
 	na2 := &wire.NetAddress{
 		Timestamp: time.Unix(0x495fab29, 0), // 2009-01-03 12:15:05 -0600 CST
 		Services:  wire.SFNodeNetwork,
 		IP:        net.ParseIP("192.168.0.1"),
 		Port:      8334,
+		Stream:    1,
 	}
 
 	// Empty address message.
@@ -99,13 +101,15 @@ func TestAddrWire(t *testing.T) {
 	multiAddr := wire.NewMsgAddr()
 	multiAddr.AddAddresses(na, na2)
 	multiAddrEncoded := []byte{
-		0x02,                   // Varint for number of addresses
-		0x49, 0x5f, 0xab, 0x29, // Timestamp
+		0x02,                                           // Varint for number of addresses
+		0x00, 0x00, 0x00, 0x00, 0x49, 0x5f, 0xab, 0x29, // Timestamp
+		0x00, 0x00, 0x00, 0x01, // Stream
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, // SFNodeNetwork
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 		0x00, 0x00, 0xff, 0xff, 0x7f, 0x00, 0x00, 0x01, // IP 127.0.0.1
 		0x20, 0x8d, // Port 8333 in big-endian
-		0x49, 0x5f, 0xab, 0x29, // Timestamp
+		0x00, 0x00, 0x00, 0x00, 0x49, 0x5f, 0xab, 0x29, // Timestamp
+		0x00, 0x00, 0x00, 0x01, // Stream
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, // SFNodeNetwork
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 		0x00, 0x00, 0xff, 0xff, 0xc0, 0xa8, 0x00, 0x01, // IP 192.168.0.1
@@ -116,7 +120,7 @@ func TestAddrWire(t *testing.T) {
 	tests := []struct {
 		in  *wire.MsgAddr // Message to encode
 		out *wire.MsgAddr // Expected decoded message
-		buf []byte          // Wire encoding
+		buf []byte        // Wire encoding
 	}{
 		// Latest protocol version with no addresses.
 		{
@@ -214,10 +218,10 @@ func TestAddrWireErrors(t *testing.T) {
 
 	tests := []struct {
 		in       *wire.MsgAddr // Value to encode
-		buf      []byte          // Wire encoding
-		max      int             // Max size of fixed buffer to induce errors
-		writeErr error           // Expected write error
-		readErr  error           // Expected read error
+		buf      []byte        // Wire encoding
+		max      int           // Max size of fixed buffer to induce errors
+		writeErr error         // Expected write error
+		readErr  error         // Expected read error
 	}{
 		// Latest protocol version with intentional read/write errors.
 		// Force error in addresses count

@@ -7,8 +7,9 @@ import (
 	"time"
 )
 
-const ()
-
+// MsgMsg implements the Message interface and represents a message sent between
+// two addresses. It can be decrypted only by those that have the private
+// encryption key that corresponds to the destination address.
 type MsgMsg struct {
 	Nonce            uint64
 	ExpiresTime      time.Time
@@ -20,7 +21,7 @@ type MsgMsg struct {
 	FromStreamNumber uint64
 	Behavior         uint32
 	SigningKey       *PubKey
-	EncryptKey       *PubKey
+	EncryptionKey    *PubKey
 	NonceTrials      uint64
 	ExtraBytes       uint64
 	Destination      *RipeHash
@@ -79,29 +80,25 @@ func (msg *MsgMsg) Encode(w io.Writer) error {
 	return err
 }
 
-// Command returns the protocol command string for the message.  This is part
+// Command returns the protocol command string for the message. This is part
 // of the Message interface implementation.
 func (msg *MsgMsg) Command() string {
 	return CmdObject
 }
 
 // MaxPayloadLength returns the maximum length the payload can be for the
-// receiver.  This is part of the Message interface implementation.
-func (msg *MsgMsg) MaxPayloadLength() uint32 {
-	return 1 << 18
+// receiver. This is part of the Message interface implementation.
+func (msg *MsgMsg) MaxPayloadLength() int {
+	return MaxMessagePayload
 }
 
 func (msg *MsgMsg) String() string {
 	return fmt.Sprintf("msg: v%d %d %s %d %x", msg.Version, msg.Nonce, msg.ExpiresTime, msg.StreamNumber, msg.Encrypted)
 }
 
-// NewMsgMsg returns a new object message that conforms to the
-// Message interface using the passed parameters and defaults for the remaining
-// fields.
+// NewMsgMsg returns a new object message that conforms to the Message interface
+// using the passed parameters and defaults for the remaining fields.
 func NewMsgMsg(nonce uint64, expires time.Time, version, streamNumber uint64, encrypted []byte, addressVersion, fromStreamNumber uint64, behavior uint32, signingKey, encryptKey *PubKey, nonceTrials, extraBytes uint64, destination *RipeHash, encoding uint64, message, ack, signature []byte) *MsgMsg {
-
-	// Limit the timestamp to one second precision since the protocol
-	// doesn't support better.
 	return &MsgMsg{
 		Nonce:            nonce,
 		ExpiresTime:      expires,
@@ -113,7 +110,7 @@ func NewMsgMsg(nonce uint64, expires time.Time, version, streamNumber uint64, en
 		FromStreamNumber: fromStreamNumber,
 		Behavior:         behavior,
 		SigningKey:       signingKey,
-		EncryptKey:       encryptKey,
+		EncryptionKey:    encryptKey,
 		NonceTrials:      nonceTrials,
 		ExtraBytes:       extraBytes,
 		Destination:      destination,

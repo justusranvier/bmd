@@ -11,7 +11,7 @@ import (
 // TestRipeHash tests the RipeHash API.
 func TestRipeHash(t *testing.T) {
 
-	ripeStr := "14a0810ac680a3eb3f82edc8"
+	ripeStr := "385e17e3f2047ca81f71ac604c6da1c2a311f384"
 	ripe, err := wire.NewRipeHashFromStr(ripeStr)
 	if err != nil {
 		t.Errorf("NewRipeHashFromStr: %v", err)
@@ -71,7 +71,7 @@ func TestRipeHash(t *testing.T) {
 
 // TestRipeHashString  tests the stringized output for sha hashes.
 func TestRipeHashString(t *testing.T) {
-	wantStr := "ecaad478d2b00432346c3f1f3986da1afd33e506"
+	wantStr := "06e533fd1ada86391f3f6c343204b0d278d4aaec"
 	hash := wire.RipeHash([wire.RipeHashSize]byte{ // Make go vet happy.
 		0x06, 0xe5, 0x33, 0xfd, 0x1a, 0xda, 0x86, 0x39,
 		0x1f, 0x3f, 0x6c, 0x34, 0x32, 0x04, 0xb0, 0xd2,
@@ -96,7 +96,7 @@ func TestNewRipeHashFromStr(t *testing.T) {
 		{
 			"",
 			wire.RipeHash{},
-			nil,
+			wire.ErrRipeHashStrSize,
 		},
 
 		// Single digit hash.
@@ -107,15 +107,15 @@ func TestNewRipeHashFromStr(t *testing.T) {
 				0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 				0x00, 0x00, 0x00, 0x00,
 			}),
-			nil,
+			wire.ErrRipeHashStrSize,
 		},
 
 		{
-			"a60840790ba1d475d01367e7c723da941069e9dc",
+			"65eaa9561128a9fd5df1995bd9e20bde38546a59",
 			wire.RipeHash([wire.RipeHashSize]byte{ // Make go vet happy.
-				0xdc, 0xe9, 0x69, 0x10, 0x94, 0xda, 0x23, 0xc7,
-				0xe7, 0x67, 0x13, 0xd0, 0x75, 0xd4, 0xa1, 0x0b,
-				0x79, 0x40, 0x08, 0xa6,
+				0x65, 0xEA, 0xA9, 0x56, 0x11, 0x28, 0xA9, 0xFD,
+				0x5D, 0xF1, 0x99, 0x5B, 0xD9, 0xE2, 0x0B, 0xDE,
+				0x38, 0x54, 0x6A, 0x59,
 			}),
 			nil,
 		},
@@ -129,7 +129,7 @@ func TestNewRipeHashFromStr(t *testing.T) {
 
 		// Hash string that is contains non-hex chars.
 		{
-			"abcdefg",
+			"65gaa9561128a9fd5df1995bd9e20bde38546a59",
 			wire.RipeHash{},
 			hex.InvalidByteError('g'),
 		},

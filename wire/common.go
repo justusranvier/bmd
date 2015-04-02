@@ -12,7 +12,7 @@ import (
 // Maximum payload size for a variable length integer.
 const MaxVarIntPayload = 9
 
-// readElement reads the next sequence of bytes from r using little endian
+// readElement reads the next sequence of bytes from r using big endian
 // depending on the concrete type of element pointed to.
 func readElement(r io.Reader, element interface{}) error {
 	var scratch [8]byte
@@ -78,7 +78,7 @@ func readElement(r io.Reader, element interface{}) error {
 		return nil
 
 	// Message header command.
-	case *[CommandSize]uint8:
+	case *[CommandSize]byte:
 		_, err := io.ReadFull(r, e[:])
 		if err != nil {
 			return err
@@ -150,7 +150,7 @@ func readElements(r io.Reader, elements ...interface{}) error {
 	return nil
 }
 
-// writeElement writes the little endian representation of element to w.
+// writeElement writes the big endian representation of element to w.
 func writeElement(w io.Writer, element interface{}) error {
 	var scratch [8]byte
 
@@ -492,7 +492,7 @@ func RandomUint64() (uint64, error) {
 // Sha512 returns the sha512 of the bytes
 func Sha512(b []byte) []byte {
 	t := sha512.Sum512(b)
-	sha := make([]byte, 512/8)
+	sha := make([]byte, sha512.Size)
 	copy(sha, t[:])
 	return sha
 }

@@ -8,9 +8,14 @@ import (
 )
 
 const (
+	// TagBroadcastVersion is the broadcast version from which tags for light
+	// clients started being added at the beginning of the broadcast message.
 	TagBroadcastVersion = 5
 )
 
+// MsgBroadcast implements the Message interface and represents a broadcast
+// message that can be decrypted by all the clients that know the address of the
+// sender.
 type MsgBroadcast struct {
 	Nonce            uint64
 	ExpiresTime      time.Time
@@ -57,7 +62,7 @@ func (msg *MsgBroadcast) Decode(r io.Reader) error {
 	}
 
 	if msg.Version >= TagBroadcastVersion {
-		msg.Tag, _ = NewShaHash(make([]byte, 32))
+		msg.Tag, _ = NewShaHash(make([]byte, HashSize))
 		if err = readElements(r, msg.Tag); err != nil {
 			return err
 		}
@@ -95,16 +100,16 @@ func (msg *MsgBroadcast) Encode(w io.Writer) error {
 	return err
 }
 
-// Command returns the protocol command string for the message.  This is part
+// Command returns the protocol command string for the message. This is part
 // of the Message interface implementation.
 func (msg *MsgBroadcast) Command() string {
 	return CmdObject
 }
 
 // MaxPayloadLength returns the maximum length the payload can be for the
-// receiver.  This is part of the Message interface implementation.
-func (msg *MsgBroadcast) MaxPayloadLength() uint32 {
-	return 1 << 18
+// receiver. This is part of the Message interface implementation.
+func (msg *MsgBroadcast) MaxPayloadLength() int {
+	return MaxMessagePayload
 }
 
 func (msg *MsgBroadcast) String() string {
@@ -115,9 +120,6 @@ func (msg *MsgBroadcast) String() string {
 // Message interface using the passed parameters and defaults for the remaining
 // fields.
 func NewMsgBroadcast(nonce uint64, expires time.Time, version, streamNumber uint64, tag *ShaHash, encrypted []byte, addressVersion, fromStreamNumber uint64, behavior uint32, signingKey, encryptKey *PubKey, nonceTrials, extraBytes uint64, destination *RipeHash, encoding uint64, message, signature []byte) *MsgBroadcast {
-
-	// Limit the timestamp to one second precision since the protocol
-	// doesn't support better.
 	return &MsgBroadcast{
 		Nonce:            nonce,
 		ExpiresTime:      expires,

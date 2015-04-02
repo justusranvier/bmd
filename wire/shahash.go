@@ -6,26 +6,23 @@ import (
 	"fmt"
 )
 
-// Size of array used to store sha hashes.  See ShaHash.
+// HashSize is the size of the array used to store SHA hashes.
 const HashSize = 32
 
-// MaxHashStringSize is the maximum length of a ShaHash hash string.
-const MaxHashStringSize = HashSize * 2
+// HashStringSize is the maximum length of a ShaHash hash string.
+const HashStringSize = HashSize * 2
 
 // ErrHashStrSize describes an error that indicates the caller specified a hash
-// string that has too many characters.
-var ErrHashStrSize = fmt.Errorf("max hash string length is %v bytes", MaxHashStringSize)
+// string that does not have the right number of characters.
+var ErrHashStrSize = fmt.Errorf("string length must be %v chars", HashStringSize)
 
-// ShaHash is used in several of the bitmessage messages and common structures.  It
-// typically represents the double sha256 of data.
+// ShaHash is used in several of the bitmessage messages and common structures.
+// It typically represents a half of the double SHA512 of data.
 type ShaHash [HashSize]byte
 
 // String returns the ShaHash as the hexadecimal string of the byte-reversed
 // hash.
 func (hash ShaHash) String() string {
-	for i := 0; i < HashSize/2; i++ {
-		hash[i], hash[HashSize-1-i] = hash[HashSize-1-i], hash[i]
-	}
 	return hex.EncodeToString(hash[:])
 }
 
@@ -45,7 +42,7 @@ func (hash *ShaHash) SetBytes(newHash []byte) error {
 		return fmt.Errorf("invalid sha length of %v, want %v", nhlen,
 			HashSize)
 	}
-	copy(hash[:], newHash[0:HashSize])
+	copy(hash[:], newHash)
 
 	return nil
 }
@@ -67,17 +64,11 @@ func NewShaHash(newHash []byte) (*ShaHash, error) {
 }
 
 // NewShaHashFromStr creates a ShaHash from a hash string.  The string should be
-// the hexadecimal string of a byte-reversed hash, but any missing characters
-// result in zero padding at the end of the ShaHash.
+// the hexadecimal string of a hash.
 func NewShaHashFromStr(hash string) (*ShaHash, error) {
-	// Return error if hash string is too long.
-	if len(hash) > MaxHashStringSize {
+	// Return error if hash string is not the right size.
+	if len(hash) != HashStringSize {
 		return nil, ErrHashStrSize
-	}
-
-	// Hex decoder expects the hash to be a multiple of two.
-	if len(hash)%2 != 0 {
-		hash = "0" + hash
 	}
 
 	// Convert string hash to bytes.
@@ -86,19 +77,5 @@ func NewShaHashFromStr(hash string) (*ShaHash, error) {
 		return nil, err
 	}
 
-	// Un-reverse the decoded bytes, copying into in leading bytes of a
-	// ShaHash.  There is no need to explicitly pad the result as any
-	// missing (when len(buf) < HashSize) bytes from the decoded hex string
-	// will remain zeros at the end of the ShaHash.
-	var ret ShaHash
-	blen := len(buf)
-	mid := blen / 2
-	if blen%2 != 0 {
-		mid++
-	}
-	blen--
-	for i, b := range buf[:mid] {
-		ret[i], ret[blen-i] = buf[blen-i], b
-	}
-	return &ret, nil
+	return NewShaHash(buf)
 }

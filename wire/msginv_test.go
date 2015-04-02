@@ -22,7 +22,7 @@ func TestInv(t *testing.T) {
 
 	// Ensure max payload is expected value for latest protocol version.
 	// Num inventory vectors (varInt) + max allowed inventory vectors.
-	wantPayload := uint32(1600009)
+	wantPayload := 1600009
 	maxPayload := msg.MaxPayloadLength()
 	if maxPayload != wantPayload {
 		t.Errorf("MaxPayloadLength: wrong max payload length for "+
@@ -66,22 +66,20 @@ func TestInv(t *testing.T) {
 // TestInvWire tests the MsgInv wire.encode and decode for various numbers
 // of inventory vectors and protocol versions.
 func TestInvWire(t *testing.T) {
-	// Block 203707 hash.
-	hashStr := "3264bc2ac36a60840790ba1d475d01367e7c723da941069e9dc"
-	blockHash, err := wire.NewShaHashFromStr(hashStr)
+	hashStr := "1ee5d34b208ebe616943fcf2cc1ca0e948cc94f73fa4e94574bc105fa6174376"
+	hash, err := wire.NewShaHashFromStr(hashStr)
 	if err != nil {
 		t.Errorf("NewShaHashFromStr: %v", err)
 	}
 
-	// Transation 1 of Block 203707 hash.
 	hashStr = "d28a3dc7392bf00a9855ee93dd9a81eff82a2c4fe57fbd42cfe71b487accfaf0"
-	txHash, err := wire.NewShaHashFromStr(hashStr)
+	hash2, err := wire.NewShaHashFromStr(hashStr)
 	if err != nil {
 		t.Errorf("NewShaHashFromStr: %v", err)
 	}
 
-	iv := wire.NewInvVect(blockHash)
-	iv2 := wire.NewInvVect(txHash)
+	iv := wire.NewInvVect(hash)
+	iv2 := wire.NewInvVect(hash2)
 
 	// Empty inv message.
 	NoInv := wire.NewMsgInv()
@@ -95,20 +93,20 @@ func TestInvWire(t *testing.T) {
 	MultiInv.AddInvVect(iv2)
 	MultiInvEncoded := []byte{
 		0x02, // Varint for number of inv vectors
-		0xdc, 0xe9, 0x69, 0x10, 0x94, 0xda, 0x23, 0xc7,
-		0xe7, 0x67, 0x13, 0xd0, 0x75, 0xd4, 0xa1, 0x0b,
-		0x79, 0x40, 0x08, 0xa6, 0x36, 0xac, 0xc2, 0x4b,
-		0x26, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Block 203707 hash
-		0xf0, 0xfa, 0xcc, 0x7a, 0x48, 0x1b, 0xe7, 0xcf,
-		0x42, 0xbd, 0x7f, 0xe5, 0x4f, 0x2c, 0x2a, 0xf8,
-		0xef, 0x81, 0x9a, 0xdd, 0x93, 0xee, 0x55, 0x98,
-		0x0a, 0xf0, 0x2b, 0x39, 0xc7, 0x3d, 0x8a, 0xd2, // Tx 1 of block 203707 hash
+		0x1E, 0xE5, 0xD3, 0x4B, 0x20, 0x8E, 0xBE, 0x61,
+		0x69, 0x43, 0xFC, 0xF2, 0xCC, 0x1C, 0xA0, 0xE9,
+		0x48, 0xCC, 0x94, 0xF7, 0x3F, 0xA4, 0xE9, 0x45,
+		0x74, 0xBC, 0x10, 0x5F, 0xA6, 0x17, 0x43, 0x76,
+		0xD2, 0x8A, 0x3D, 0xC7, 0x39, 0x2B, 0xF0, 0x0A,
+		0x98, 0x55, 0xEE, 0x93, 0xDD, 0x9A, 0x81, 0xEF,
+		0xF8, 0x2A, 0x2C, 0x4F, 0xE5, 0x7F, 0xBD, 0x42,
+		0xCF, 0xE7, 0x1B, 0x48, 0x7A, 0xCC, 0xFA, 0xF0,
 	}
 
 	tests := []struct {
 		in  *wire.MsgInv // Message to encode
 		out *wire.MsgInv // Expected decoded message
-		buf []byte         // Wire encoding
+		buf []byte       // Wire encoding
 	}{
 		// Latest protocol version with no inv vectors.
 		{
@@ -161,24 +159,23 @@ func TestInvWire(t *testing.T) {
 func TestInvWireErrors(t *testing.T) {
 	wireErr := &wire.MessageError{}
 
-	// Block 203707 hash.
-	hashStr := "3264bc2ac36a60840790ba1d475d01367e7c723da941069e9dc"
-	blockHash, err := wire.NewShaHashFromStr(hashStr)
+	hashStr := "1ee5d34b208ebe616943fcf2cc1ca0e948cc94f73fa4e94574bc105fa6174376"
+	hash, err := wire.NewShaHashFromStr(hashStr)
 	if err != nil {
 		t.Errorf("NewShaHashFromStr: %v", err)
 	}
 
-	iv := wire.NewInvVect(blockHash)
+	iv := wire.NewInvVect(hash)
 
 	// Base inv message used to induce errors.
 	baseInv := wire.NewMsgInv()
 	baseInv.AddInvVect(iv)
 	baseInvEncoded := []byte{
 		0x02, // Varint for number of inv vectors
-		0xdc, 0xe9, 0x69, 0x10, 0x94, 0xda, 0x23, 0xc7,
-		0xe7, 0x67, 0x13, 0xd0, 0x75, 0xd4, 0xa1, 0x0b,
-		0x79, 0x40, 0x08, 0xa6, 0x36, 0xac, 0xc2, 0x4b,
-		0x26, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Block 203707 hash
+		0x1E, 0xE5, 0xD3, 0x4B, 0x20, 0x8E, 0xBE, 0x61,
+		0x69, 0x43, 0xFC, 0xF2, 0xCC, 0x1C, 0xA0, 0xE9,
+		0x48, 0xCC, 0x94, 0xF7, 0x3F, 0xA4, 0xE9, 0x45,
+		0x74, 0xBC, 0x10, 0x5F, 0xA6, 0x17, 0x43, 0x76,
 	}
 
 	// Inv message that forces an error by having more than the max allowed
@@ -194,10 +191,10 @@ func TestInvWireErrors(t *testing.T) {
 
 	tests := []struct {
 		in       *wire.MsgInv // Value to encode
-		buf      []byte         // Wire encoding
-		max      int            // Max size of fixed buffer to induce errors
-		writeErr error          // Expected write error
-		readErr  error          // Expected read error
+		buf      []byte       // Wire encoding
+		max      int          // Max size of fixed buffer to induce errors
+		writeErr error        // Expected write error
+		readErr  error        // Expected read error
 	}{
 		// Latest protocol version with intentional read/write errors.
 		// Force error in inventory vector count
@@ -248,6 +245,5 @@ func TestInvWireErrors(t *testing.T) {
 				continue
 			}
 		}
-
 	}
 }
