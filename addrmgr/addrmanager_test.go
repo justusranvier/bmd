@@ -478,7 +478,7 @@ func TestHostToNetAddress(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		if _, err := n.HostToNetAddress(test.input, uint16(1234), wire.SFNodeNetwork); (err == nil) == test.err {
+		if _, err := n.HostToNetAddress(test.input, uint16(1234), uint32(1), wire.SFNodeNetwork); (err == nil) == test.err {
 			t.Errorf("TestDeserializeNetAddress failed for input \"%s\" with error \"%s\"", test.input, err)
 		}
 	}
