@@ -1,7 +1,6 @@
 package wire
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"net"
@@ -11,17 +10,21 @@ import (
 
 // MaxUserAgentLen is the maximum allowed length for the user agent field in a
 // version message (MsgVersion).
-const MaxUserAgentLen = 2000
+const MaxUserAgentLen = 5000
 
-// DefaultUserAgent for wire.in the stack
-const DefaultUserAgent = "/wire:0.2.0/"
+// MaxStreams is the maximum number of allowed streams to request according
+// to the bitmessage protocol. Keeping it at 1 for now.
+const MaxStreams = 1
+
+// DefaultUserAgent for wire
+const DefaultUserAgent = "/wire:0.1.0/"
 
 // MsgVersion implements the Message interface and represents a bitmessage version
-// message.  It is used for a peer to advertise itself as soon as an outbound
-// connection is made.  The remote peer then uses this information along with
-// its own to negotiate.  The remote peer must then respond with a version
+// message. It is used for a peer to advertise itself as soon as an outbound
+// connection is made. The remote peer then uses this information along with
+// its own to negotiate. The remote peer must then respond with a version
 // message of its own containing the negotiated values followed by a verack
-// message (MsgVerAck).  This exchange must take place before any further
+// message (MsgVerAck). This exchange must take place before any further
 // communication is allowed to proceed.
 type MsgVersion struct {
 	// Version of the protocol the node is using.
@@ -30,20 +33,20 @@ type MsgVersion struct {
 	// Bitfield which identifies the enabled services.
 	Services ServiceFlag
 
-	// Time the message was generated.  This is encoded as an int64 on the wire.
+	// Time the message was generated. This is encoded as an int64 on the wire.
 	Timestamp time.Time
 
 	// Address of the remote peer.
-	AddrYou NetAddress
+	AddrYou *NetAddress
 
 	// Address of the local peer.
-	AddrMe NetAddress
+	AddrMe *NetAddress
 
 	// Unique value associated with message that is used to detect self
 	// connections.
 	Nonce uint64
 
-	// The user agent that generated messsage.  This is a encoded as a varString
+	// The user agent that generated messsage. This is a encoded as a varString
 	// on the wire.  This has a max length of MaxUserAgentLen.
 	UserAgent string
 
@@ -67,36 +70,31 @@ func (msg *MsgVersion) AddService(service ServiceFlag) {
 }
 
 // Decode decodes r using the bitmessage protocol encoding into the receiver.
-//
 // This is part of the Message interface implementation.
 func (msg *MsgVersion) Decode(r io.Reader) error {
-	buf, ok := r.(*bytes.Buffer)
-	if !ok {
-		return fmt.Errorf("MsgVersion.Decode reader is not a " +
-			"*bytes.Buffer")
-	}
-
 	var sec int64
-	err := readElements(buf, &msg.ProtocolVersion, &msg.Services, &sec)
+	err := readElements(r, &msg.ProtocolVersion, &msg.Services, &sec)
 	if err != nil {
 		return err
 	}
 	msg.Timestamp = time.Unix(sec, 0)
 
-	err = readNetAddress(buf, &msg.AddrYou, false)
+	msg.AddrYou = new(NetAddress)
+	err = readNetAddress(r, msg.AddrYou, false)
 	if err != nil {
 		return err
 	}
 
-	err = readNetAddress(buf, &msg.AddrMe, false)
+	msg.AddrMe = new(NetAddress)
+	err = readNetAddress(r, msg.AddrMe, false)
 	if err != nil {
 		return err
 	}
-	err = readElement(buf, &msg.Nonce)
+	err = readElement(r, &msg.Nonce)
 	if err != nil {
 		return err
 	}
-	userAgent, err := readVarString(buf)
+	userAgent, err := readVarString(r)
 	if err != nil {
 		return err
 	}
@@ -106,13 +104,18 @@ func (msg *MsgVersion) Decode(r io.Reader) error {
 	}
 	msg.UserAgent = userAgent
 
-	streamLen, err := readVarInt(buf)
+	streamLen, err := readVarInt(r)
 	if err != nil {
 		return err
 	}
+
+	if streamLen > MaxStreams {
+		return fmt.Errorf("number of streams is too large: %v", streamLen)
+	}
+
 	msg.StreamNumbers = make([]uint64, int(streamLen))
 	for i := uint64(0); i < streamLen; i++ {
-		msg.StreamNumbers[i], err = readVarInt(buf)
+		msg.StreamNumbers[i], err = readVarInt(r)
 		if err != nil {
 			return err
 		}
@@ -135,12 +138,12 @@ func (msg *MsgVersion) Encode(w io.Writer) error {
 		return err
 	}
 
-	err = writeNetAddress(w, &msg.AddrYou, false)
+	err = writeNetAddress(w, msg.AddrYou, false)
 	if err != nil {
 		return err
 	}
 
-	err = writeNetAddress(w, &msg.AddrMe, false)
+	err = writeNetAddress(w, msg.AddrMe, false)
 	if err != nil {
 		return err
 	}
@@ -159,6 +162,11 @@ func (msg *MsgVersion) Encode(w io.Writer) error {
 	if err != nil {
 		return err
 	}
+
+	if len(msg.StreamNumbers) > MaxStreams {
+		return fmt.Errorf("number of streams is too large: %v", len(msg.StreamNumbers))
+	}
+
 	for _, stream := range msg.StreamNumbers {
 		err = writeVarInt(w, stream)
 		if err != nil {
@@ -169,38 +177,36 @@ func (msg *MsgVersion) Encode(w io.Writer) error {
 	return nil
 }
 
-// Command returns the protocol command string for the message.  This is part
+// Command returns the protocol command string for the message. This is part
 // of the Message interface implementation.
 func (msg *MsgVersion) Command() string {
 	return CmdVersion
 }
 
 // MaxPayloadLength returns the maximum length the payload can be for the
-// receiver.  This is part of the Message interface implementation.
-func (msg *MsgVersion) MaxPayloadLength() uint32 {
-	// XXX: <= 106 different
-
+// receiver. This is part of the Message interface implementation.
+func (msg *MsgVersion) MaxPayloadLength() int {
 	// Protocol version 4 bytes + services 8 bytes + timestamp 8 bytes +
-	// remote and local net addresses + nonce 8 bytes + length of user
-	// agent (varInt) + max allowed useragent length + last block 4 bytes +
-	// relay transactions flag 1 byte.
-	return 33 + (maxNetAddressPayload() * 2) + MaxVarIntPayload +
-		MaxUserAgentLen
+	// remote and local net addresses (26*2) + nonce 8 bytes + length of user
+	// agent (varInt) + max allowed useragent length + number of streams
+	// (varInt) + list of streams
+	return 4 + 8 + 8 + 26*2 + 8 + VarIntSerializeSize(MaxUserAgentLen) +
+		MaxUserAgentLen + MaxStreams + VarIntSerializeSize(MaxStreams)*MaxStreams
+	// The last calculation is slightly invalid because initial numbers would
+	// take up less space than larger ones. However, this serves as a quick and
+	// easy to calculate upperbound.
 }
 
 // NewMsgVersion returns a new bitmessage version message that conforms to the
 // Message interface using the passed parameters and defaults for the remaining
 // fields.
 func NewMsgVersion(me *NetAddress, you *NetAddress, nonce uint64, streams []uint64) *MsgVersion {
-
-	// Limit the timestamp to one second precision since the protocol
-	// doesn't support better.
 	return &MsgVersion{
 		ProtocolVersion: int32(3),
 		Services:        0,
 		Timestamp:       time.Unix(time.Now().Unix(), 0),
-		AddrYou:         *you,
-		AddrMe:          *me,
+		AddrYou:         you,
+		AddrMe:          me,
 		Nonce:           nonce,
 		UserAgent:       DefaultUserAgent,
 		StreamNumbers:   streams[:],
@@ -210,21 +216,21 @@ func NewMsgVersion(me *NetAddress, you *NetAddress, nonce uint64, streams []uint
 // NewMsgVersionFromConn is a convenience function that extracts the remote
 // and local address from conn and returns a new bitmessage version message that
 // conforms to the Message interface.  See NewMsgVersion.
-func NewMsgVersionFromConn(conn net.Conn, nonce uint64, streams []uint64) (*MsgVersion, error) {
+func NewMsgVersionFromConn(conn net.Conn, nonce uint64, currentStream uint32, allStreams []uint64) (*MsgVersion, error) {
 
 	// Don't assume any services until we know otherwise.
-	lna, err := NewNetAddress(conn.LocalAddr(), 0)
+	lna, err := NewNetAddress(conn.LocalAddr(), currentStream, 0)
 	if err != nil {
 		return nil, err
 	}
 
 	// Don't assume any services until we know otherwise.
-	rna, err := NewNetAddress(conn.RemoteAddr(), 0)
+	rna, err := NewNetAddress(conn.RemoteAddr(), currentStream, 0)
 	if err != nil {
 		return nil, err
 	}
 
-	return NewMsgVersion(lna, rna, nonce, streams), nil
+	return NewMsgVersion(lna, rna, nonce, allStreams), nil
 }
 
 // validateUserAgent checks userAgent length against MaxUserAgentLen

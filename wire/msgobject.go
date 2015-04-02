@@ -1,9 +1,8 @@
 package wire
 
-// Objects in bitmessage are things on the network that get
-// propagated. This can include requests/responses for pubkeys,
-// messages and broadcasts.
-
+// ObjectType represents the type of object than an object message contains.
+// Objects in bitmessage are things on the network that get propagated. This can
+// include requests/responses for pubkeys, messages and broadcasts.
 type ObjectType uint32
 
 const (
@@ -13,7 +12,8 @@ const (
 	ObjectTypeBroadcast ObjectType = 3
 )
 
-// Map of service flags back to their constant names for pretty printing.
+// obStrings is a map of service flags back to their constant names for pretty
+// printing.
 var obStrings = map[ObjectType]string{
 	ObjectTypeGetPubKey: "GETPUBKEY",
 	ObjectTypePubKey:    "PUBKEY",

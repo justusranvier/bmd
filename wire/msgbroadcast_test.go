@@ -26,7 +26,7 @@ func TestBroadcast(t *testing.T) {
 
 	// Ensure max payload is expected value for latest protocol version.
 	// Num objectentory vectors (varInt) + max allowed objectentory vectors.
-	wantPayload := uint32(1 << 18)
+	wantPayload := wire.MaxMessagePayload
 	maxPayload := msg.MaxPayloadLength()
 	if maxPayload != wantPayload {
 		t.Errorf("MaxPayloadLength: wrong max payload length for "+
@@ -65,7 +65,7 @@ func TestBroadcastWire(t *testing.T) {
 	tests := []struct {
 		in  *wire.MsgBroadcast // Message to encode
 		out *wire.MsgBroadcast // Expected decoded message
-		buf []byte               // Wire encoding
+		buf []byte             // Wire encoding
 	}{
 		// Latest protocol version with multiple object vectors.
 		{
@@ -119,7 +119,7 @@ func TestBroadcastWireError(t *testing.T) {
 	// error.
 	fr := newFixedReader(0, []byte{})
 	if err := baseMsg.Decode(fr); err == nil {
-		t.Errorf("Did not received error when calling " +
+		t.Errorf("Did not receive error when calling " +
 			"MsgVersion.Decode with non *bytes.Buffer")
 	}
 
@@ -129,10 +129,10 @@ func TestBroadcastWireError(t *testing.T) {
 
 	tests := []struct {
 		in       *wire.MsgBroadcast // Value to encode
-		buf      []byte               // Wire encoding
-		max      int                  // Max size of fixed buffer to induce errors
-		writeErr error                // Expected write error
-		readErr  error                // Expected read error
+		buf      []byte             // Wire encoding
+		max      int                // Max size of fixed buffer to induce errors
+		writeErr error              // Expected write error
+		readErr  error              // Expected read error
 	}{
 		// Force error in nonce
 		{baseBroadcast, baseBroadcastEncoded, 0, io.ErrShortWrite, io.EOF},
@@ -212,7 +212,7 @@ var baseBroadcast = &wire.MsgBroadcast{
 	},
 }
 
-// baseBroadcast is used in the various tests as a baseline MsgBroadcast.
+// baseBroadcast is a broadcast from a v4 address (includes a tag).
 var taggedBroadcast = &wire.MsgBroadcast{
 	Nonce:        123123,                   // 0x1e0f3
 	ExpiresTime:  time.Unix(0x495fab29, 0), // 2009-01-03 12:15:05 -0600 CST)
@@ -260,7 +260,8 @@ var baseBroadcastEncoded = []byte{
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Encrypted Data
 }
 
-// baseBroadcastEncoded is the wire.encoded bytes for baseBroadcast (just encrypted data)
+// tagBroadcastEncoded is the wire.encoded bytes for broadcast from a v4 address
+// (includes a tag).
 var tagBroadcastEncoded = []byte{
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x47, 0xd8, // 83928 nonce
 	0x00, 0x00, 0x00, 0x00, 0x49, 0x5f, 0xab, 0x29, // 64-bit Timestamp

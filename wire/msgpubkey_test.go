@@ -24,8 +24,7 @@ func TestPubKey(t *testing.T) {
 	}
 
 	// Ensure max payload is expected value for latest protocol version.
-	// Num objectentory vectors (varInt) + max allowed objectentory vectors.
-	wantPayload := uint32(1 << 18)
+	wantPayload := wire.MaxMessagePayload
 	maxPayload := msg.MaxPayloadLength()
 	if maxPayload != wantPayload {
 		t.Errorf("MaxPayloadLength: wrong max payload length for "+
@@ -59,7 +58,7 @@ func TestPubKeyWire(t *testing.T) {
 	tests := []struct {
 		in  *wire.MsgPubKey // Message to encode
 		out *wire.MsgPubKey // Expected decoded message
-		buf []byte            // Wire encoding
+		buf []byte          // Wire encoding
 	}{
 		// Latest protocol version with multiple object vectors.
 		{
@@ -128,10 +127,10 @@ func TestPubKeyWireError(t *testing.T) {
 
 	tests := []struct {
 		in       *wire.MsgPubKey // Value to encode
-		buf      []byte            // Wire encoding
-		max      int               // Max size of fixed buffer to induce errors
-		writeErr error             // Expected write error
-		readErr  error             // Expected read error
+		buf      []byte          // Wire encoding
+		max      int             // Max size of fixed buffer to induce errors
+		writeErr error           // Expected write error
+		readErr  error           // Expected read error
 	}{
 		// Force error in nonce
 		{basePubKey, basePubKeyEncoded, 0, io.ErrShortWrite, io.EOF},
@@ -202,6 +201,17 @@ func TestPubKeyWireError(t *testing.T) {
 			}
 		}
 	}
+
+	// Test error for binary message with a pubkey that is too long.
+	expandedPubKeyEncoded[156] = 90
+	buf := bytes.NewBuffer(expandedPubKeyEncoded)
+	var msg wire.MsgPubKey
+	err := msg.Decode(buf)
+	if reflect.TypeOf(err) != reflect.TypeOf(&wire.MessageError{Func: "", Description: ""}) {
+		t.Errorf("%s", err.Error())
+	}
+	// Return expandedPubKeyEncoded to its original form.
+	expandedPubKeyEncoded[156] = 40
 }
 
 var pubKey1 = &wire.PubKey{
@@ -225,44 +235,44 @@ var tag = &wire.ShaHash{
 
 // basePubKey is used in the various tests as a baseline MsgPubKey.
 var basePubKey = &wire.MsgPubKey{
-	Nonce:        123123,                   // 0x1e0f3
-	ExpiresTime:  time.Unix(0x495fab29, 0), // 2009-01-03 12:15:05 -0600 CST)
-	ObjectType:   wire.ObjectTypePubKey,
-	Version:      2,
-	StreamNumber: 1,
-	Behavior:     0,
-	SigningKey:   pubKey1,
-	EncryptKey:   pubKey2,
+	Nonce:         123123,                   // 0x1e0f3
+	ExpiresTime:   time.Unix(0x495fab29, 0), // 2009-01-03 12:15:05 -0600 CST)
+	ObjectType:    wire.ObjectTypePubKey,
+	Version:       2,
+	StreamNumber:  1,
+	Behavior:      0,
+	SigningKey:    pubKey1,
+	EncryptionKey: pubKey2,
 }
 
 var expandedPubKey = &wire.MsgPubKey{
-	Nonce:        123123,                   // 0x1e0f3
-	ExpiresTime:  time.Unix(0x495fab29, 0), // 2009-01-03 12:15:05 -0600 CST)
-	ObjectType:   wire.ObjectTypePubKey,
-	Version:      3,
-	StreamNumber: 1,
-	Behavior:     0,
-	SigningKey:   pubKey1,
-	EncryptKey:   pubKey2,
-	NonceTrials:  0,
-	ExtraBytes:   0,
-	Signature:    []byte{0, 1, 2, 3},
+	Nonce:         123123,                   // 0x1e0f3
+	ExpiresTime:   time.Unix(0x495fab29, 0), // 2009-01-03 12:15:05 -0600 CST)
+	ObjectType:    wire.ObjectTypePubKey,
+	Version:       3,
+	StreamNumber:  1,
+	Behavior:      0,
+	SigningKey:    pubKey1,
+	EncryptionKey: pubKey2,
+	NonceTrials:   0,
+	ExtraBytes:    0,
+	Signature:     []byte{0, 1, 2, 3},
 }
 
 var encryptedPubKey = &wire.MsgPubKey{
-	Nonce:        123123,                   // 0x1e0f3
-	ExpiresTime:  time.Unix(0x495fab29, 0), // 2009-01-03 12:15:05 -0600 CST)
-	ObjectType:   wire.ObjectTypePubKey,
-	Version:      4,
-	StreamNumber: 1,
-	Behavior:     0,
-	SigningKey:   nil,
-	EncryptKey:   nil,
-	NonceTrials:  0,
-	ExtraBytes:   0,
-	Signature:    nil,
-	Tag:          tag,
-	Encrypted:    []byte{0, 1, 2, 3, 4, 5, 6, 7, 8},
+	Nonce:         123123,                   // 0x1e0f3
+	ExpiresTime:   time.Unix(0x495fab29, 0), // 2009-01-03 12:15:05 -0600 CST)
+	ObjectType:    wire.ObjectTypePubKey,
+	Version:       4,
+	StreamNumber:  1,
+	Behavior:      0,
+	SigningKey:    nil,
+	EncryptionKey: nil,
+	NonceTrials:   0,
+	ExtraBytes:    0,
+	Signature:     nil,
+	Tag:           tag,
+	Encrypted:     []byte{0, 1, 2, 3, 4, 5, 6, 7, 8},
 }
 
 // basePubKeyEncoded is the wire.encoded bytes for basePubKey

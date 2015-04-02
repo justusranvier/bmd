@@ -46,8 +46,8 @@ func (msg *fakeMessage) Command() string {
 // MaxPayloadLength returns the length of the payload field of fake message
 // or a smaller value if the forceLenErr flag of the fake message is set.  It
 // satisfies the wire.Message interface.
-func (msg *fakeMessage) MaxPayloadLength() uint32 {
-	lenp := uint32(len(msg.payload))
+func (msg *fakeMessage) MaxPayloadLength() int {
+	lenp := len(msg.payload)
 	if msg.forceLenErr {
 		return lenp - 1
 	}

@@ -29,9 +29,8 @@ func TestGetPubKey(t *testing.T) {
 			cmd, wantCmd)
 	}
 
-	// Ensure max payload is expected value for latest protocol version.
-	// Num objectentory vectors (varInt) + max allowed objectentory vectors.
-	wantPayload := uint32(1 << 18)
+	// Ensure max payload is expected value for latest protocol version..
+	wantPayload := 70
 	maxPayload := msg.MaxPayloadLength()
 	if maxPayload != wantPayload {
 		t.Errorf("MaxPayloadLength: wrong max payload length for "+
@@ -63,7 +62,7 @@ func TestGetPubKeyWire(t *testing.T) {
 	msgRipe := wire.NewMsgGetPubKey(83928, expires, 2, 1, ripe, nil)
 
 	// empty ripe, something in tag
-	tagBytes := make([]byte, 32)
+	tagBytes := make([]byte, wire.HashSize)
 	tagBytes[0] = 1
 	tag, err := wire.NewShaHash(tagBytes)
 	if err != nil {
@@ -91,13 +90,13 @@ func TestGetPubKeyWire(t *testing.T) {
 		0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // 32-byte ripemd
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // 32-byte sha
 	}
 
 	tests := []struct {
 		in  *wire.MsgGetPubKey // Message to encode
 		out *wire.MsgGetPubKey // Expected decoded message
-		buf []byte               // Wire encoding
+		buf []byte             // Wire encoding
 	}{
 		// Latest protocol version with multiple object vectors.
 		{
@@ -157,10 +156,10 @@ func TestGetPubKeyWireError(t *testing.T) {
 
 	tests := []struct {
 		in       *wire.MsgGetPubKey // Value to encode
-		buf      []byte               // Wire encoding
-		max      int                  // Max size of fixed buffer to induce errors
-		writeErr error                // Expected write error
-		readErr  error                // Expected read error
+		buf      []byte             // Wire encoding
+		max      int                // Max size of fixed buffer to induce errors
+		writeErr error              // Expected write error
+		readErr  error              // Expected read error
 	}{
 		// Force error in nonce
 		{baseGetPubKey, baseGetPubKeyEncoded, 0, io.ErrShortWrite, io.EOF},
@@ -247,7 +246,7 @@ var baseGetPubKeyEncoded = []byte{
 	0x00, 0x00, 0x00, 0x00, // Ripe
 }
 
-// baseGetPubKey is used in the various tests as a baseline MsgGetPubKey.
+// tagGetPubKey is a pubkey request for a v4 pubkey which includes a tag.
 var tagGetPubKey = &wire.MsgGetPubKey{
 	Nonce:        123123,                   // 0x1e0f3
 	ExpiresTime:  time.Unix(0x495fab29, 0), // 2009-01-03 12:15:05 -0600 CST)
@@ -260,8 +259,8 @@ var tagGetPubKey = &wire.MsgGetPubKey{
 		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
 }
 
-// baseGetPubKeyEncoded is the wire.encoded bytes for baseGetPubKey
-// using version 2 (pre-tag
+// tagGetPubKeyEncoded is the wire.encoded bytes for a v4 pubkey which includes
+// a tag.
 var tagGetPubKeyEncoded = []byte{
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0xe0, 0xf3, // Nonce
 	0x00, 0x00, 0x00, 0x00, 0x49, 0x5f, 0xab, 0x29, // 64-bit Timestamp

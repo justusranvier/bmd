@@ -12,9 +12,9 @@ const MaxAddrPerMsg = 1000
 // MsgAddr implements the Message interface and represents a bitmessage
 // addr message.  It is used to provide a list of known active peers on the
 // network.  An active peer is considered one that has transmitted a message
-// within the last 3 hours.  Nodes which have not transmitted in that time
-// frame should be forgotten.  Each message is limited to a maximum number of
-// addresses, which is currently 1000.  As a result, multiple messages must
+// within the last 3 hours. Nodes which have not transmitted in that time
+// frame should be forgotten. Each message is limited to a maximum number of
+// addresses, which is currently 1000. As a result, multiple messages must
 // be used to relay the full list.
 //
 // Use the AddAddress function to build up the list of known addresses when
@@ -81,8 +81,6 @@ func (msg *MsgAddr) Decode(r io.Reader) error {
 // Encode encodes the receiver to w using the bitmessage protocol encoding.
 // This is part of the Message interface implementation.
 func (msg *MsgAddr) Encode(w io.Writer) error {
-	// Protocol versions before MultipleAddressVersion only allowed 1 address
-	// per message.
 	count := len(msg.AddrList)
 	if count > MaxAddrPerMsg {
 		str := fmt.Sprintf("too many addresses for message "+
@@ -105,21 +103,22 @@ func (msg *MsgAddr) Encode(w io.Writer) error {
 	return nil
 }
 
-// Command returns the protocol command string for the message.  This is part
+// Command returns the protocol command string for the message. This is part
 // of the Message interface implementation.
 func (msg *MsgAddr) Command() string {
 	return CmdAddr
 }
 
 // MaxPayloadLength returns the maximum length the payload can be for the
-// receiver.  This is part of the Message interface implementation.
-func (msg *MsgAddr) MaxPayloadLength() uint32 {
+// receiver. This is part of the Message interface implementation.
+func (msg *MsgAddr) MaxPayloadLength() int {
 	// Num addresses (varInt) + max allowed addresses.
-	return MaxVarIntPayload + (MaxAddrPerMsg * maxNetAddressPayload())
+	return VarIntSerializeSize(MaxAddrPerMsg) +
+		(MaxAddrPerMsg * maxNetAddressPayload())
 }
 
 // NewMsgAddr returns a new bitmessage addr message that conforms to the
-// Message interface.  See MsgAddr for details.
+// Message interface. See MsgAddr for details.
 func NewMsgAddr() *MsgAddr {
 	return &MsgAddr{
 		AddrList: make([]*NetAddress, 0, MaxAddrPerMsg),

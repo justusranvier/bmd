@@ -2,12 +2,12 @@ package wire_test
 
 import (
 	"bytes"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"reflect"
 	"strings"
 	"testing"
-	"encoding/hex"
 
 	"github.com/davecgh/go-spew/spew"
 	"github.com/monetas/bmd/wire"
@@ -470,7 +470,7 @@ func TestVarStringWireErrors(t *testing.T) {
 
 // TestVarStringOverflowErrors performs tests to ensure deserializing variable
 // length strings intentionally crafted to use large values for the string
-// length are handled properly.  This could otherwise potentially be used as an
+// length are handled properly. This could otherwise potentially be used as an
 // attack vector.
 func TestVarStringOverflowErrors(t *testing.T) {
 	tests := []struct {
@@ -593,7 +593,7 @@ func TestVarBytesWireErrors(t *testing.T) {
 
 // TestVarBytesOverflowErrors performs tests to ensure deserializing variable
 // length byte arrays intentionally crafted to use large values for the array
-// length are handled properly.  This could otherwise potentially be used as an
+// length are handled properly. This could otherwise potentially be used as an
 // attack vector.
 func TestVarBytesOverflowErrors(t *testing.T) {
 	tests := []struct {
@@ -622,9 +622,9 @@ func TestVarBytesOverflowErrors(t *testing.T) {
 }
 
 // TestRandomUint64 exercises the randomness of the random number generator on
-// the system by ensuring the probability of the generated numbers.  If the RNG
+// the system by ensuring the probability of the generated numbers. If the RNG
 // is evenly distributed as a proper cryptographic RNG should be, there really
-// should only be 1 number < 2^56 in 2^8 tries for a 64-bit number.  However,
+// should only be 1 number < 2^56 in 2^8 tries for a 64-bit number. However,
 // use a higher number of 5 to really ensure the test doesn't fail unless the
 // RNG is just horrendous.
 func TestRandomUint64(t *testing.T) {
@@ -673,8 +673,8 @@ func TestRandomUint64Errors(t *testing.T) {
 // TestDoubleSha512 checks some test cases for DoubleSha512.
 func TestDoubleSha512(t *testing.T) {
 	tests := []struct {
-			input string
-			expected string
+		input    string
+		expected string
 	}{
 		{
 			"",
@@ -695,15 +695,15 @@ func TestDoubleSha512(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		byte_slice := []byte(test.input)
-		result := wire.DoubleSha512(byte_slice)
-		expected := wire.Sha512(wire.Sha512(byte_slice))
+		byteSlice := []byte(test.input)
+		result := wire.DoubleSha512(byteSlice)
+		expected := wire.Sha512(wire.Sha512(byteSlice))
 		if !bytes.Equal(expected, result) {
-			t.Errorf("DoubleSha512 fails for case \"%s\" against Sha512: expected %s, got %s", byte_slice, expected, result)
+			t.Errorf("DoubleSha512 fails for case \"%s\" against Sha512: expected %s, got %s", byteSlice, expected, result)
 		}
 		expected, _ = hex.DecodeString(test.expected)
 		if !bytes.Equal(expected, result) {
-			t.Errorf("DoubleSha512 fails for case \"%s\" against preset string: expected %s, got %s", byte_slice, expected, result)
+			t.Errorf("DoubleSha512 fails for case \"%s\" against preset string: expected %s, got %s", byteSlice, expected, result)
 		}
 	}
 }

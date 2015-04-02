@@ -79,7 +79,7 @@ func TstWriteNetAddress(w io.Writer, na *NetAddress, ts bool) error {
 
 // TstMaxNetAddressPayload makes the internal maxNetAddressPayload function
 // available to the test package.
-func TstMaxNetAddressPayload() uint32 {
+func TstMaxNetAddressPayload() int {
 	return maxNetAddressPayload()
 }
 
@@ -93,4 +93,10 @@ func TstReadInvVect(r io.Reader, iv *InvVect) error {
 // test package.
 func TstWriteInvVect(w io.Writer, iv *InvVect) error {
 	return writeInvVect(w, iv)
+}
+
+// TstDiscardInput makes the internal discardInput function available
+// to the test package.
+func TstDiscardInput(r io.Reader, n uint32) {
+	discardInput(r, n)
 }

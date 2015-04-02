@@ -22,12 +22,12 @@ func TestNetAddress(t *testing.T) {
 		IP:   ip,
 		Port: port,
 	}
-	na, err := wire.NewNetAddress(tcpAddr, 0)
+	na, err := wire.NewNetAddress(tcpAddr, 0, 0)
 	if err != nil {
 		t.Errorf("NewNetAddress: %v", err)
 	}
 
-	// Ensure we get the same ip, port, and services back out.
+	// Ensure we get the same ip, port, services and stream back out.
 	if !na.IP.Equal(ip) {
 		t.Errorf("NetNetAddress: wrong ip - got %v, want %v", na.IP, ip)
 	}
@@ -42,6 +42,9 @@ func TestNetAddress(t *testing.T) {
 	if na.HasService(wire.SFNodeNetwork) {
 		t.Errorf("HasService: SFNodeNetwork service is set")
 	}
+	if na.Stream != 0 {
+		t.Errorf("Stream: wrong stream - got %v, want %v", na.Stream, 0)
+	}
 
 	// Ensure adding the full service node flag works.
 	na.AddService(wire.SFNodeNetwork)
@@ -54,7 +57,7 @@ func TestNetAddress(t *testing.T) {
 	}
 
 	// Ensure max payload is expected value for latest protocol version.
-	wantPayload := uint32(30)
+	wantPayload := 38
 	maxPayload := wire.TstMaxNetAddressPayload()
 	if maxPayload != wantPayload {
 		t.Errorf("maxNetAddressPayload: wrong max payload length for "+
@@ -63,7 +66,7 @@ func TestNetAddress(t *testing.T) {
 
 	// Check for expected failure on wrong address type.
 	udpAddr := &net.UDPAddr{}
-	_, err = wire.NewNetAddress(udpAddr, 0)
+	_, err = wire.NewNetAddress(udpAddr, 0, 0)
 	if err != wire.ErrInvalidNetAddr {
 		t.Errorf("NewNetAddress: expected error not received - "+
 			"got %v, want %v", err, wire.ErrInvalidNetAddr)
@@ -76,6 +79,7 @@ func TestNetAddressWire(t *testing.T) {
 	// baseNetAddr is used in the various tests as a baseline NetAddress.
 	baseNetAddr := wire.NetAddress{
 		Timestamp: time.Unix(0x495fab29, 0), // 2009-01-03 12:15:05 -0600 CST
+		Stream:    1,
 		Services:  wire.SFNodeNetwork,
 		IP:        net.ParseIP("127.0.0.1"),
 		Port:      8333,
@@ -84,10 +88,12 @@ func TestNetAddressWire(t *testing.T) {
 	// baseNetAddrNoTS is baseNetAddr with a zero value for the timestamp.
 	baseNetAddrNoTS := baseNetAddr
 	baseNetAddrNoTS.Timestamp = time.Time{}
+	baseNetAddrNoTS.Stream = 0
 
 	// baseNetAddrEncoded is the wire.encoded bytes of baseNetAddr.
 	baseNetAddrEncoded := []byte{
-		0x49, 0x5f, 0xab, 0x29, // Timestamp
+		0x00, 0x00, 0x00, 0x00, 0x49, 0x5f, 0xab, 0x29, // Timestamp
+		0x00, 0x00, 0x00, 0x01, // Stream number
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, // SFNodeNetwork
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 		0x00, 0x00, 0xff, 0xff, 0x7f, 0x00, 0x00, 0x01, // IP 127.0.0.1
@@ -106,8 +112,8 @@ func TestNetAddressWire(t *testing.T) {
 	tests := []struct {
 		in  wire.NetAddress // NetAddress to encode
 		out wire.NetAddress // Expected decoded NetAddress
-		ts  bool              // Include timestamp?
-		buf []byte            // Wire encoding
+		ts  bool            // Include timestamp?
+		buf []byte          // Wire encoding
 	}{
 		// Latest protocol version without ts flag.
 		{
@@ -171,31 +177,31 @@ func TestNetAddressWireErrors(t *testing.T) {
 
 	tests := []struct {
 		in       *wire.NetAddress // Value to encode
-		buf      []byte             // Wire encoding
-		ts       bool               // Include timestamp flag
-		max      int                // Max size of fixed buffer to induce errors
-		writeErr error              // Expected write error
-		readErr  error              // Expected read error
+		buf      []byte           // Wire encoding
+		ts       bool             // Include timestamp flag
+		max      int              // Max size of fixed buffer to induce errors
+		writeErr error            // Expected write error
+		readErr  []error          // Expected read error (more than one may be possible)
 	}{
 		// Latest protocol version with timestamp and intentional
 		// read/write errors.
 		// Force errors on timestamp.
-		{&baseNetAddr, []byte{}, true, 0, io.ErrShortWrite, io.EOF},
+		{&baseNetAddr, []byte{}, true, 0, io.ErrShortWrite, []error{io.EOF, io.ErrUnexpectedEOF}},
 		// Force errors on services.
-		{&baseNetAddr, []byte{}, true, 4, io.ErrShortWrite, io.EOF},
+		{&baseNetAddr, []byte{}, true, 4, io.ErrShortWrite, []error{io.EOF, io.ErrUnexpectedEOF}},
 		// Force errors on ip.
-		{&baseNetAddr, []byte{}, true, 12, io.ErrShortWrite, io.EOF},
+		{&baseNetAddr, []byte{}, true, 12, io.ErrShortWrite, []error{io.EOF, io.ErrUnexpectedEOF}},
 		// Force errors on port.
-		{&baseNetAddr, []byte{}, true, 28, io.ErrShortWrite, io.EOF},
+		{&baseNetAddr, []byte{}, true, 28, io.ErrShortWrite, []error{io.EOF, io.ErrUnexpectedEOF}},
 
 		// Latest protocol version with no timestamp and intentional
 		// read/write errors.
 		// Force errors on services.
-		{&baseNetAddr, []byte{}, false, 0, io.ErrShortWrite, io.EOF},
+		{&baseNetAddr, []byte{}, false, 0, io.ErrShortWrite, []error{io.EOF, io.ErrUnexpectedEOF}},
 		// Force errors on ip.
-		{&baseNetAddr, []byte{}, false, 8, io.ErrShortWrite, io.EOF},
+		{&baseNetAddr, []byte{}, false, 8, io.ErrShortWrite, []error{io.EOF, io.ErrUnexpectedEOF}},
 		// Force errors on port.
-		{&baseNetAddr, []byte{}, false, 24, io.ErrShortWrite, io.EOF},
+		{&baseNetAddr, []byte{}, false, 24, io.ErrShortWrite, []error{io.EOF, io.ErrUnexpectedEOF}},
 	}
 
 	t.Logf("Running %d tests", len(tests))
@@ -213,10 +219,15 @@ func TestNetAddressWireErrors(t *testing.T) {
 		var na wire.NetAddress
 		r := newFixedReader(test.max, test.buf)
 		err = wire.TstReadNetAddress(r, &na, test.ts)
-		if err != test.readErr {
-			t.Errorf("readNetAddress #%d wrong error got: %v, want: %v",
-				i, err, test.readErr)
-			continue
+
+		for _, readErr := range test.readErr {
+			if err == readErr {
+				goto pass
+			}
 		}
+		t.Errorf("readNetAddress #%d wrong error got: %v, want: %v",
+			i, err, test.readErr)
+		continue
+	pass:
 	}
 }

@@ -26,7 +26,7 @@ func TestMsg(t *testing.T) {
 
 	// Ensure max payload is expected value for latest protocol version.
 	// Num objectentory vectors (varInt) + max allowed objectentory vectors.
-	wantPayload := uint32(1 << 18)
+	wantPayload := wire.MaxMessagePayload
 	maxPayload := msg.MaxPayloadLength()
 	if maxPayload != wantPayload {
 		t.Errorf("MaxPayloadLength: wrong max payload length for "+
@@ -41,8 +41,7 @@ func TestMsg(t *testing.T) {
 	return
 }
 
-// TestMsgWire tests the MsgMsg wire.encode and decode for
-// various versions.
+// TestMsgWire tests the MsgMsg wire.encode and decode for various versions.
 func TestMsgWire(t *testing.T) {
 	expires := time.Unix(0x495fab29, 0) // 2009-01-03 12:15:05 -0600 CST)
 	enc := make([]byte, 128)
@@ -60,9 +59,8 @@ func TestMsgWire(t *testing.T) {
 	tests := []struct {
 		in  *wire.MsgMsg // Message to encode
 		out *wire.MsgMsg // Expected decoded message
-		buf []byte         // Wire encoding
+		buf []byte       // Wire encoding
 	}{
-		// Latest protocol version with multiple object vectors.
 		{
 			msgBase,
 			msgBase,
@@ -124,10 +122,10 @@ func TestMsgWireError(t *testing.T) {
 
 	tests := []struct {
 		in       *wire.MsgMsg // Value to encode
-		buf      []byte         // Wire encoding
-		max      int            // Max size of fixed buffer to induce errors
-		writeErr error          // Expected write error
-		readErr  error          // Expected read error
+		buf      []byte       // Wire encoding
+		max      int          // Max size of fixed buffer to induce errors
+		writeErr error        // Expected write error
+		readErr  error        // Expected read error
 	}{
 		// Force error in nonce
 		{baseMsg, baseMsgEncoded, 0, io.ErrShortWrite, io.EOF},

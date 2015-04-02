@@ -6,27 +6,23 @@ import (
 	"fmt"
 )
 
-// Size of array used to store Public Keys
+// PubKeySize is the size of array used to store uncompressed public keys. Note
+// that the first byte (0x04) is excluded when storing them.
 const PubKeySize = 64
 
-// MaxHashStringSize is the maximum length of a Ripe hash string.
+// MaxPubKeyStringSize is the maximum length of a PubKey string.
 const MaxPubKeyStringSize = PubKeySize * 2
 
 // ErrPubKeyStrSize describes an error that indicates the caller specified
-// a hash string that has too many characters.
-var ErrPubKeyStrSize = fmt.Errorf("max hash string length is %v bytes", MaxPubKeyStringSize)
+// a PubKey string that does not have the right number of characters.
+var ErrPubKeyStrSize = fmt.Errorf("string length must be %v chars", MaxPubKeyStringSize)
 
-// PubKey is used in several of the bitmessage messages and common
-// structures.  It typically represents the double sha512 and ripemd160
-// of data.
+// PubKey is used in several of the bitmessage messages and common structures.
+// The first 32 bytes contain the X value and the other 32 contain the Y value.
 type PubKey [PubKeySize]byte
 
-// String returns the PubKey as the hexadecimal string of the byte-reversed
-// hash.
+// String returns the PubKey as a hexadecimal string.
 func (hash PubKey) String() string {
-	for i := 0; i < PubKeySize/2; i++ {
-		hash[i], hash[PubKeySize-1-i] = hash[PubKeySize-1-i], hash[i]
-	}
 	return hex.EncodeToString(hash[:])
 }
 
@@ -38,12 +34,12 @@ func (hash *PubKey) Bytes() []byte {
 	return newHash
 }
 
-// SetBytes sets the bytes which represent the hash.  An error is returned if
+// SetBytes sets the bytes which represent the hash. An error is returned if
 // the number of bytes passed in is not PubKeySize.
 func (hash *PubKey) SetBytes(newHash []byte) error {
 	nhlen := len(newHash)
 	if nhlen != PubKeySize {
-		return fmt.Errorf("invalid sha length of %v, want %v", nhlen,
+		return fmt.Errorf("invalid pub key length of %v, want %v", nhlen,
 			PubKeySize)
 	}
 	copy(hash[:], newHash[0:PubKeySize])
@@ -56,50 +52,30 @@ func (hash *PubKey) IsEqual(target *PubKey) bool {
 	return bytes.Equal(hash[:], target[:])
 }
 
-// NewPubKey returns a new PubKey from a byte slice.  An error is returned if
+// NewPubKey returns a new PubKey from a byte slice. An error is returned if
 // the number of bytes passed in is not PubKeySize.
 func NewPubKey(newHash []byte) (*PubKey, error) {
-	var ripe PubKey
-	err := ripe.SetBytes(newHash)
+	var pubkey PubKey
+	err := pubkey.SetBytes(newHash)
 	if err != nil {
 		return nil, err
 	}
-	return &ripe, err
+	return &pubkey, err
 }
 
-// NewPubKeyFromStr creates a PubKey from a hash string.  The string
-// should be the hexadecimal string of a byte hash, but any missing
-// characters result in zero padding at the end of the PubKey.
-func NewPubKeyFromStr(hash string) (*PubKey, error) {
-	// Return error if hash string is too long.
-	if len(hash) > MaxPubKeyStringSize {
+// NewPubKeyFromStr creates a PubKey from a hash string. The string should be
+// the hexadecimal string of the PubKey.
+func NewPubKeyFromStr(pubkey string) (*PubKey, error) {
+	// Return error if PubKey string is not the right size.
+	if len(pubkey) != MaxPubKeyStringSize {
 		return nil, ErrPubKeyStrSize
 	}
 
-	// Hex decoder expects the hash to be a multiple of two.
-	if len(hash)%2 != 0 {
-		hash = "0" + hash
-	}
-
 	// Convert string hash to bytes.
-	buf, err := hex.DecodeString(hash)
+	buf, err := hex.DecodeString(pubkey)
 	if err != nil {
 		return nil, err
 	}
 
-	// Un-reverse the decoded bytes, copying into in leading bytes of a
-	// PubKey.  There is no need to explicitly pad the result as any
-	// missing (when len(buf) < PubKeySize) bytes from the decoded hex string
-	// will remain zeros at the end of the PubKey.
-	var ret PubKey
-	blen := len(buf)
-	mid := blen / 2
-	if blen%2 != 0 {
-		mid++
-	}
-	blen--
-	for i, b := range buf[:mid] {
-		ret[i], ret[blen-i] = buf[blen-i], b
-	}
-	return &ret, nil
+	return NewPubKey(buf)
 }
