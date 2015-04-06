@@ -511,12 +511,13 @@ func (a *AddrManager) DeserializeNetAddress(addr string) (*wire.NetAddress, erro
 		return nil, err
 	}
 	port, err := strconv.ParseUint(portStr, 10, 16)
-	stream, err := strconv.ParseUint(portStr, 10, 32)
 	if err != nil {
 		return nil, err
 	}
 
-	return a.HostToNetAddress(host, uint16(port), uint32(stream), wire.SFNodeNetwork)
+	// Hard-coded stream 1 in here. In the future when we support streams,
+	// we will want to update this.
+	return a.HostToNetAddress(host, uint16(port), 1, wire.SFNodeNetwork)
 }
 
 // Start begins the core address handler which manages a pool of known

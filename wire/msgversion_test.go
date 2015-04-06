@@ -35,7 +35,7 @@ func TestVersion(t *testing.T) {
 	}
 
 	// Ensure we get the correct data back out.
-	msg := wire.NewMsgVersion(me, you, nonce, []uint64{1})
+	msg := wire.NewMsgVersion(me, you, nonce, []uint32{1})
 	if msg.ProtocolVersion != int32(pver) {
 		t.Errorf("NewMsgVersion: wrong protocol version - got %v, want %v",
 			msg.ProtocolVersion, pver)
@@ -133,7 +133,7 @@ func TestVersion(t *testing.T) {
 
 	// Use a fake connection.
 	conn := &fakeConn{localAddr: tcpAddrMe, remoteAddr: tcpAddrYou}
-	msg, err = wire.NewMsgVersionFromConn(conn, nonce, 1, []uint64{1})
+	msg, err = wire.NewMsgVersionFromConn(conn, nonce, 1, []uint32{1})
 	if err != nil {
 		t.Errorf("NewMsgVersionFromConn: %v", err)
 	}
@@ -153,7 +153,7 @@ func TestVersion(t *testing.T) {
 		localAddr:  &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 8333},
 		remoteAddr: tcpAddrYou,
 	}
-	msg, err = wire.NewMsgVersionFromConn(conn, nonce, 1, []uint64{1})
+	msg, err = wire.NewMsgVersionFromConn(conn, nonce, 1, []uint32{1})
 	if err != wire.ErrInvalidNetAddr {
 		t.Errorf("NewMsgVersionFromConn: expected error not received "+
 			"- got %v, want %v", err, wire.ErrInvalidNetAddr)
@@ -164,7 +164,7 @@ func TestVersion(t *testing.T) {
 		localAddr:  tcpAddrMe,
 		remoteAddr: &net.UDPAddr{IP: net.ParseIP("192.168.0.1"), Port: 8333},
 	}
-	msg, err = wire.NewMsgVersionFromConn(conn, nonce, 1, []uint64{1})
+	msg, err = wire.NewMsgVersionFromConn(conn, nonce, 1, []uint32{1})
 	if err != wire.ErrInvalidNetAddr {
 		t.Errorf("NewMsgVersionFromConn: expected error not received "+
 			"- got %v, want %v", err, wire.ErrInvalidNetAddr)
@@ -362,7 +362,7 @@ var baseVersion = &wire.MsgVersion{
 	},
 	Nonce:         123123, // 0x1e0f3
 	UserAgent:     "/wiretest:0.0.1/",
-	StreamNumbers: []uint64{1},
+	StreamNumbers: []uint32{1},
 }
 
 // baseVersionEncoded is the wire.encoded bytes for baseVersion
@@ -408,7 +408,7 @@ var tooManyStreamsVersion = &wire.MsgVersion{
 	},
 	Nonce:         123123, // 0x1e0f3
 	UserAgent:     "/wiretest:0.0.1/",
-	StreamNumbers: []uint64{1, 2},
+	StreamNumbers: []uint32{1, 2},
 }
 
 // tooManyStreamsVersionEncoded is the wire.encoded bytes for tooManyStreamsVersion
