@@ -42,7 +42,7 @@ func (msg *MsgMsg) Decode(r io.Reader) error {
 
 	if msg.ObjectType != ObjectTypeMsg {
 		str := fmt.Sprintf("Object Type should be %d, but is %d",
-			ObjectTypeGetPubKey, msg.ObjectType)
+			ObjectTypeMsg, msg.ObjectType)
 		return messageError("Decode", str)
 	}
 
@@ -89,7 +89,7 @@ func (msg *MsgMsg) Command() string {
 // MaxPayloadLength returns the maximum length the payload can be for the
 // receiver. This is part of the Message interface implementation.
 func (msg *MsgMsg) MaxPayloadLength() int {
-	return MaxMessagePayload
+	return MaxPayloadOfMsgObject
 }
 
 func (msg *MsgMsg) String() string {

@@ -1,5 +1,11 @@
 package wire
 
+const (
+	// The maximum payload of object message can be = 2^18 bytes.
+	// (not to be confused with the object payload)
+	MaxPayloadOfMsgObject = 262144
+)
+
 // ObjectType represents the type of object than an object message contains.
 // Objects in bitmessage are things on the network that get propagated. This can
 // include requests/responses for pubkeys, messages and broadcasts.

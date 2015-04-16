@@ -165,7 +165,7 @@ func (msg *MsgPubKey) Command() string {
 // receiver. This is part of the Message interface implementation.
 func (msg *MsgPubKey) MaxPayloadLength() int {
 	// TODO find a sensible value based on pubkey version
-	return MaxMessagePayload
+	return MaxPayloadOfMsgObject
 }
 
 func (msg *MsgPubKey) String() string {

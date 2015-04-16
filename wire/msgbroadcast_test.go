@@ -25,8 +25,7 @@ func TestBroadcast(t *testing.T) {
 	}
 
 	// Ensure max payload is expected value for latest protocol version.
-	// Num objectentory vectors (varInt) + max allowed objectentory vectors.
-	wantPayload := wire.MaxMessagePayload
+	wantPayload := wire.MaxPayloadOfMsgObject
 	maxPayload := msg.MaxPayloadLength()
 	if maxPayload != wantPayload {
 		t.Errorf("MaxPayloadLength: wrong max payload length for "+

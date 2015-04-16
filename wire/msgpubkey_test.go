@@ -24,7 +24,7 @@ func TestPubKey(t *testing.T) {
 	}
 
 	// Ensure max payload is expected value for latest protocol version.
-	wantPayload := wire.MaxMessagePayload
+	wantPayload := wire.MaxPayloadOfMsgObject
 	maxPayload := msg.MaxPayloadLength()
 	if maxPayload != wantPayload {
 		t.Errorf("MaxPayloadLength: wrong max payload length for "+

@@ -279,8 +279,7 @@ func ReadMessageN(r io.Reader, bmnet BitmessageNet) (int, Message, []byte, error
 		case ObjectTypeBroadcast:
 			msg = &MsgBroadcast{}
 		default:
-			str := fmt.Sprintf("unknown object type %d", objType)
-			return totalBytes, nil, nil, messageError("ReadMessage", str)
+			msg = &MsgUnknownObject{}
 		}
 	} else {
 		msg, err = makeEmptyMessage(command)
