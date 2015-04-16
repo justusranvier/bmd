@@ -13,6 +13,9 @@ const (
 	TagGetPubKeyVersion = 4
 )
 
+// MsgGetPubKey implements the Message interface and represents a request for a
+// public key. If Version <= TagGetPubKeyVersion, tag is encoded in message and
+// not ripe.
 type MsgGetPubKey struct {
 	Nonce        uint64
 	ExpiresTime  time.Time

@@ -5,6 +5,12 @@ package wire
 // include requests/responses for pubkeys, messages and broadcasts.
 type ObjectType uint32
 
+// There are five types of objects in bitmessage.
+//  - GetPubKey: requests for public keys.
+//  - PubKey: public keys sent in response.
+//  - Msg: bitmessage messages.
+//  - Broadcast: broadcast messages.
+// An ObjectType can also take on other values representing unknown message types.
 const (
 	ObjectTypeGetPubKey ObjectType = 0
 	ObjectTypePubKey    ObjectType = 1
