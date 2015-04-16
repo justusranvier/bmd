@@ -333,7 +333,7 @@ func TestAttempt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Adding address failed: %v", err)
 	}
-	ka := n.GetAddress("any", 100)
+	ka := n.GetAddress("any")
 
 	if !ka.LastAttempt().IsZero() {
 		t.Errorf("Address should not have attempts, but does")
@@ -363,7 +363,7 @@ func TestConnected(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Adding address failed: %v", err)
 	}
-	ka := n.GetAddress("any", 100)
+	ka := n.GetAddress("any")
 	na = ka.NetAddress()
 	na.Timestamp = time.Now().Add(time.Hour * -1) // make it an hour ago
 
@@ -590,7 +590,7 @@ func TestGetAddress(t *testing.T) {
 	n = addrmgr.New("testgetaddress", lookupFunc)
 
 	// Get an address from an empty set (should error)
-	if rv := n.GetAddress("any", 10); rv != nil {
+	if rv := n.GetAddress("any"); rv != nil {
 		t.Errorf("GetAddress failed: got: %v want: %v\n", rv, nil)
 	}
 
@@ -599,7 +599,7 @@ func TestGetAddress(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Adding address failed: %v", err)
 	}
-	ka = n.GetAddress("any", 120) // 100 bias is max, but shouldn't error
+	ka = n.GetAddress("any")
 	if ka == nil {
 		t.Fatalf("Did not get an address where there is one in the pool")
 	}
@@ -609,18 +609,7 @@ func TestGetAddress(t *testing.T) {
 
 	// Mark this as a good address and get it
 	n.Good(ka.NetAddress())
-	ka = n.GetAddress("any", -10) // 0 bias is min, but shouldn't error
-	if ka == nil {
-		t.Fatalf("Did not get an address where there is one in the pool")
-	}
-	if ka.NetAddress().IP.String() != someIP {
-		t.Errorf("Wrong IP: got %v, want %v", ka.NetAddress().IP.String(), someIP)
-	}
-
-	// In an earlier version of the function, there was a bug which caused it to
-	// loop infiniely if the bias was 100 and there were no new addresses, so
-	// testing that case.
-	ka = n.GetAddress("any", 100)
+	ka = n.GetAddress("any")
 	if ka == nil {
 		t.Fatalf("Did not get an address where there is one in the pool")
 	}
@@ -646,7 +635,7 @@ func TestGetAddress(t *testing.T) {
 	n.TstAddKnownAddress(
 		addrmgr.TstNewKnownAddress(netAddrB,
 			10, time.Now().Add(-30*time.Minute), time.Now(), false, 0), 3)
-	ka = n.GetAddress("any", 50)
+	ka = n.GetAddress("any")
 
 	if ka == nil {
 		t.Fatalf("Did not get an address where there is one in the pool")
@@ -661,7 +650,7 @@ func TestGetAddress(t *testing.T) {
 	n.TstGoodNoChecks(netAddrA, 3)
 	n.TstGoodNoChecks(netAddrB, 3)
 
-	ka = n.GetAddress("any", 50)
+	ka = n.GetAddress("any")
 	if ka == nil {
 		t.Fatalf("Did not get an address where there is one in the pool")
 	}

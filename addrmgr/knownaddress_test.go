@@ -19,27 +19,27 @@ func TestChance(t *testing.T) {
 			// Test normal case
 			addrmgr.TstNewKnownAddress(&wire.NetAddress{Timestamp: time.Now().Add(-35 * time.Second)},
 				0, time.Now().Add(-30*time.Minute), time.Now(), false, 0),
-			.944882,
+			1.0,
 		}, {
 			// Test case in which lastseen < 0
 			addrmgr.TstNewKnownAddress(&wire.NetAddress{Timestamp: time.Now().Add(20 * time.Second)},
 				0, time.Now().Add(-30*time.Minute), time.Now(), false, 0),
-			1.000,
+			1.0,
 		}, {
 			// Test case in which lastattempt < 0
 			addrmgr.TstNewKnownAddress(&wire.NetAddress{Timestamp: time.Now().Add(-35 * time.Second)},
 				0, time.Now().Add(30*time.Minute), time.Now(), false, 0),
-			.00944882,
+			1.0 * .01,
 		}, {
 			// Test case in which lastattempt < ten minutes
 			addrmgr.TstNewKnownAddress(&wire.NetAddress{Timestamp: time.Now().Add(-35 * time.Second)},
 				0, time.Now().Add(-5*time.Minute), time.Now(), false, 0),
-			.00944882,
+			1.0 * .01,
 		}, {
 			// Test case with several failed attempts.
 			addrmgr.TstNewKnownAddress(&wire.NetAddress{Timestamp: time.Now().Add(-35 * time.Second)},
 				2, time.Now().Add(-30*time.Minute), time.Now(), false, 0),
-			.419948,
+			1 / 1.5 / 1.5,
 		},
 	}
 
