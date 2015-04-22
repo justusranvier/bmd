@@ -18,8 +18,9 @@ import (
 	"time"
 
 	"github.com/btcsuite/go-socks/socks"
+	"github.com/monetas/bmutil/wire"
+
 	"github.com/monetas/bmd/addrmgr"
-	"github.com/monetas/bmd/wire"
 )
 
 const (

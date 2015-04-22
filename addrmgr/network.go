@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/monetas/bmd/wire"
+	"github.com/monetas/bmutil/wire"
 )
 
 var (

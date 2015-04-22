@@ -19,7 +19,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/monetas/bmd/wire"
+	"github.com/monetas/bmutil"
+	"github.com/monetas/bmutil/wire"
 )
 
 // AddrManager provides a concurrency safe address manager for caching potential
@@ -291,7 +292,7 @@ func (a *AddrManager) getNewBucket(netAddr, srcAddr *wire.NetAddress) int {
 	data1 = append(data1, a.key[:]...)
 	data1 = append(data1, []byte(GroupKey(netAddr))...)
 	data1 = append(data1, []byte(GroupKey(srcAddr))...)
-	hash1 := wire.DoubleSha512(data1)
+	hash1 := bmutil.DoubleSha512(data1)
 	hash64 := binary.LittleEndian.Uint64(hash1)
 	hash64 %= newBucketsPerGroup
 	var hashbuf [8]byte
@@ -301,7 +302,7 @@ func (a *AddrManager) getNewBucket(netAddr, srcAddr *wire.NetAddress) int {
 	data2 = append(data2, GroupKey(srcAddr)...)
 	data2 = append(data2, hashbuf[:]...)
 
-	hash2 := wire.DoubleSha512(data2)
+	hash2 := bmutil.DoubleSha512(data2)
 	return int(binary.LittleEndian.Uint64(hash2) % newBucketCount)
 }
 
@@ -311,7 +312,7 @@ func (a *AddrManager) getTriedBucket(netAddr *wire.NetAddress) int {
 	data1 := []byte{}
 	data1 = append(data1, a.key[:]...)
 	data1 = append(data1, []byte(NetAddressKey(netAddr))...)
-	hash1 := wire.DoubleSha512(data1)
+	hash1 := bmutil.DoubleSha512(data1)
 	hash64 := binary.LittleEndian.Uint64(hash1)
 	hash64 %= triedBucketsPerGroup
 	var hashbuf [8]byte
@@ -321,7 +322,7 @@ func (a *AddrManager) getTriedBucket(netAddr *wire.NetAddress) int {
 	data2 = append(data2, GroupKey(netAddr)...)
 	data2 = append(data2, hashbuf[:]...)
 
-	hash2 := wire.DoubleSha512(data2)
+	hash2 := bmutil.DoubleSha512(data2)
 	return int(binary.LittleEndian.Uint64(hash2) % triedBucketCount)
 }
 

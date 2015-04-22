@@ -5,8 +5,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/monetas/bmutil/wire"
+
 	"github.com/monetas/bmd/addrmgr"
-	"github.com/monetas/bmd/wire"
 )
 
 // TestIPTypes ensures the various functions which determine the type of an IP
