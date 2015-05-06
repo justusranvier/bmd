@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math"
 	"math/rand"
 	"net"
 	"os"
@@ -722,7 +721,7 @@ func NetAddressKey(na *wire.NetAddress) string {
 // random one from the possible addresses with preference given to ones that
 // have not been used recently and should not pick 'close' addresses
 // consecutively.
-func (a *AddrManager) GetAddress(class string, newBias int) *KnownAddress {
+func (a *AddrManager) GetAddress(class string) *KnownAddress {
 	// Protect concurrent access.
 	a.mtx.Lock()
 	defer a.mtx.Unlock()
@@ -731,22 +730,8 @@ func (a *AddrManager) GetAddress(class string, newBias int) *KnownAddress {
 		return nil
 	}
 
-	if newBias > 100 {
-		newBias = 100
-	}
-	if newBias < 0 {
-		newBias = 0
-	}
-
-	// Bias between new and tried addresses.
-	triedCorrelation := math.Sqrt(float64(a.nTried)) *
-		(100.0 - float64(newBias))
-	newCorrelation := math.Sqrt(float64(a.nNew)) * float64(newBias)
-
-	// If there are tried vectors but no new vectors, automatically select from tried
-	// vectors. Otherwise choose which to select from according to the random rule.
-	if a.nNew == 0 || ((newCorrelation+triedCorrelation)*a.rand.Float64()) <
-		triedCorrelation {
+	// Use a 50% chance for choosing between tried and new table entries.
+	if a.nTried > 0 && (a.nNew == 0 || a.rand.Intn(2) == 0) {
 		// Tried entry.
 		large := 1 << 30
 		factor := 1.0
@@ -854,12 +839,12 @@ func (a *AddrManager) Good(addr *wire.NetAddress) {
 	if ka == nil {
 		return
 	}
+
+	// ka.Timestamp is not updated here to avoid leaking information
+	// about currently connected peers.
 	now := time.Now()
 	ka.lastsuccess = now
 	ka.lastattempt = now
-	naCopy := *ka.na
-	naCopy.Timestamp = time.Now()
-	ka.na = &naCopy
 	ka.attempts = 0
 
 	// move to tried set, optionally evicting other addresses if neeed.
