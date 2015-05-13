@@ -1,3 +1,10 @@
+// Originally derived from: btcsuite/btcd/btcec/genprecomps.go
+// Copyright (c) 2013-2015 Conformal Systems LLC.
+
+// Copyright (c) 2015 Monetas.
+// Use of this source code is governed by an ISC
+// license that can be found in the LICENSE file.
+
 // This file is ignored during the regular build due to the following build tag.
 // It is called by go generate and used to automatically generate pre-computed
 // tables used to accelerate operations.
