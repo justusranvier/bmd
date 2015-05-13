@@ -1,3 +1,10 @@
+// Originally derived from: btcsuite/btcd/peer.go
+// Copyright (c) 2013-2015 Conformal Systems LLC.
+
+// Copyright (c) 2015 Monetas.
+// Use of this source code is governed by an ISC
+// license that can be found in the LICENSE file.
+
 package main
 
 import (

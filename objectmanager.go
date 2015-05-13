@@ -1,4 +1,4 @@
-// Originally derived from: btcsuite/btcd/mruinvmap.go
+// Originally derived from: btcsuite/btcd/blockmanager.go
 // Copyright (c) 2013-2015 the btcsuite developers.
 
 // Copyright (c) 2013-2014 Monetas.
