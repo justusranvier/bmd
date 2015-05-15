@@ -1,3 +1,7 @@
+// Copyright (c) 2015 Monetas.
+// Use of this source code is governed by an ISC
+// license that can be found in the LICENSE file.
+
 package bmpeer
 
 import (
@@ -23,6 +27,7 @@ type Connection interface {
 	Close() error
 }
 
+// TODO handle timeout and ping/pong issues.
 // connection implements the Connection interface and connects to a 
 // real outside bitmessage node over the internet. 
 type connection struct {

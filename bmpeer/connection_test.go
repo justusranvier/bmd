@@ -1,3 +1,7 @@
+// Copyright (c) 2015 Monetas.
+// Use of this source code is governed by an ISC
+// license that can be found in the LICENSE file.
+
 package bmpeer_test
 
 import(
@@ -15,8 +19,7 @@ import(
 type MockConn struct {
 	sendChan    chan []byte
 	receiveChan chan []byte
-	sendDone    chan struct{}
-	receiveDone chan struct{}
+	done        chan struct{}
 	outMessage []byte              // A message ready to be sent back to the real peer.
 	outPlace   int                 //How much of the outMessage that has been sent.
 	localAddr  net.Addr
@@ -26,8 +29,7 @@ type MockConn struct {
 
 func (mc *MockConn) Close() error {
 	mc.closed = true
-	mc.sendDone <- struct{}{}
-	mc.receiveDone <- struct{}{}
+	close(mc.done)
 	return nil
 }
 
@@ -62,13 +64,13 @@ func (mc *MockConn) MockRead() wire.Message {
 
 	var header, body []byte
 	select {
-		case <- mc.sendDone :
+		case <- mc.done :
 			return nil
 		case header = <- mc.sendChan :
 	}
 	
 	select {
-		case <- mc.sendDone :
+		case <- mc.done :
 			return nil
 		case body = <- mc.sendChan :
 	}
@@ -105,7 +107,7 @@ func (mc *MockConn) Read(b []byte) (int, error) {
 	for i < len(b) {
 		if mc.outMessage == nil {
 			select {
-				case <- mc.receiveDone: 
+				case <- mc.done: 
 					return 0, errors.New("Connection closed.")
 				case mc.outMessage = <- mc.receiveChan :
 			}
@@ -141,8 +143,7 @@ func NewMockConn(localAddr, remoteAddr net.Addr) *MockConn {
 		remoteAddr : remoteAddr,
 		sendChan : make(chan []byte), 
 		receiveChan : make(chan []byte), 
-		sendDone :  make(chan struct{}, 1),
-		receiveDone :  make(chan struct{}, 1),
+		done :  make(chan struct{}),
 	}
 }
 

@@ -41,7 +41,7 @@ type PeerTest interface {
 	OnMsgAddr(p *wire.MsgAddr) *PeerAction
 	OnMsgInv(p *wire.MsgInv) *PeerAction
 	OnMsgGetData(p *wire.MsgGetData) *PeerAction
-	OnMsgObject(p wire.Message) *PeerAction
+	OnSendData(invVect []*wire.InvVect) *PeerAction
 }
 
 type OutboundHandshakePeerTester struct {
@@ -100,7 +100,7 @@ func (peer *OutboundHandshakePeerTester) OnMsgGetData(p *wire.MsgGetData) *PeerA
 	}
 }
 
-func (peer *OutboundHandshakePeerTester) OnMsgObject(p wire.Message) *PeerAction {
+func (peer *OutboundHandshakePeerTester) OnSendData(invVect []*wire.InvVect) *PeerAction {
 	if peer.handshakeComplete {
 		return nil
 	} else {
@@ -186,7 +186,7 @@ func (peer *InboundHandshakePeerTester) OnMsgGetData(p *wire.MsgGetData) *PeerAc
 	}
 }
 
-func (peer *InboundHandshakePeerTester) OnMsgObject(p wire.Message) *PeerAction {
+func (peer *InboundHandshakePeerTester) OnSendData(invVect []*wire.InvVect) *PeerAction {
 	if peer.handshakeComplete {
 		return nil
 	} else {
@@ -420,7 +420,7 @@ type MockConnection struct {
 	remoteAddr net.Addr 
 }
 
-func (mock *MockConnection) ReadMessage() (wire.Message, error) {	
+func (mock *MockConnection) ReadMessage() (wire.Message, error) {
 	//If the queue is empty, get a new message from the channel.
 	for mock.msgQueue == nil || mock.queuePlace >= len(mock.msgQueue) {
 		mock.msgQueue = <-mock.reply
@@ -438,7 +438,7 @@ func (mock *MockConnection) ReadMessage() (wire.Message, error) {
 	return toSend, nil
 }
 
-// Send figures out how to respond to a message once it is decyphered.
+// WriteMessage figures out how to respond to a message once it is decyphered.
 func (mock *MockConnection) WriteMessage(rmsg wire.Message) error {
 	// We can keep receiving messages after the interaction is done; we just ignore them.	
 	// We are waiting to see whether the peer disconnects.
@@ -448,6 +448,23 @@ func (mock *MockConnection) WriteMessage(rmsg wire.Message) error {
 	
 	mock.timer.Reset(time.Second)
 	mock.handleAction(mock.handleMessage(rmsg))
+	return nil
+}
+
+func (mock *MockConnection) QueueDataRequest(invVect []*wire.InvVect) error {
+	// We can keep receiving messages after the interaction is done; we just ignore them.	
+	// We are waiting to see whether the peer disconnects.
+	if mock.interactionComplete {
+		return nil
+	}
+	
+	mock.timer.Reset(time.Second)
+	mock.handleAction(mock.peerTest.OnSendData(invVect))
+	return nil
+}
+
+// We ignore new inventory because that sort of thing isn't handled by this set of tests.
+func (mock *MockConnection) QueueInventory(inv *wire.InvVect) error {
 	return nil
 }
 
@@ -491,16 +508,10 @@ func (mock *MockConnection) handleMessage(msg wire.Message) *PeerAction {
 		return mock.peerTest.OnMsgVerAck(msg.(*wire.MsgVerAck))
 	case *wire.MsgAddr:
 		return mock.peerTest.OnMsgAddr(msg.(*wire.MsgAddr))
-	case *wire.MsgGetPubKey:
-		return mock.peerTest.OnMsgObject(msg.(*wire.MsgGetPubKey))
-	case *wire.MsgPubKey:
-		return mock.peerTest.OnMsgObject(msg.(*wire.MsgPubKey))
-	case *wire.MsgMsg:
-		return mock.peerTest.OnMsgObject(msg.(*wire.MsgMsg))
-	case *wire.MsgBroadcast:
-		return mock.peerTest.OnMsgObject(msg.(*wire.MsgBroadcast))
-	case *wire.MsgUnknownObject:
-		return mock.peerTest.OnMsgObject(msg.(*wire.MsgUnknownObject))
+	case *wire.MsgInv:
+		return mock.peerTest.OnMsgInv(msg.(*wire.MsgInv))
+	case *wire.MsgGetData:
+		return mock.peerTest.OnMsgGetData(msg.(*wire.MsgGetData))
 	default:
 		return nil
 	}
@@ -545,7 +556,7 @@ func (mock *MockConnection) Done(err error) {
 }
 
 // Start loads the mock peer's initial action if there is one.
-func (mock *MockConnection) Start() {
+func (mock *MockConnection) BeginTest() {
 	action := mock.peerTest.OnStart()
 	
 	if action == nil {
@@ -589,7 +600,7 @@ func NewMockConnection(localAddr, remoteAddr net.Addr, report chan TestReport, p
 		}
 	})
 
-	mock.Start()
+	mock.BeginTest()
 
 	return mock
 }
@@ -727,7 +738,7 @@ func TestOutboundPeerHandshake(t *testing.T) {
 		listeners := []string{net.JoinHostPort("", "8445")}
 		serv, err := TstNewServer(listeners, getMemDb([]wire.Message{}),
 			MockListen([]*MockListener{
-				NewMockListener(localAddr, make(chan bmpeer.Connection), make(chan struct{}))}))
+				NewMockListener(localAddr, make(chan bmpeer.Connection), make(chan struct{}, 1))}))
 		if err != nil {
 			t.Fatal("Server failed to start: %s", err)
 		}
@@ -819,7 +830,7 @@ func TestInboundPeerHandshake(t *testing.T) {
 		var err error
 		serv, err := TstNewServer(listeners, getMemDb([]wire.Message{}),
 			MockListen([]*MockListener{
-				NewMockListener(localAddr, make(chan bmpeer.Connection), make(chan struct{}))}))
+				NewMockListener(localAddr, incoming, make(chan struct{}))}))
 		if err != nil {
 			t.Fatal("Server failed to start: %s", err)
 		}
@@ -845,7 +856,7 @@ func TestInboundPeerHandshake(t *testing.T) {
 //  * after a successful handshake, get an addr and receive one. 
 //  * error case: send an addr message that is too big. 
 //  * Give the peer no addresses to send. 
-func TestProcessAddr(t *testing.T) {
+func TestqProcessAddr(t *testing.T) {
 	// Process a handshake. This should be an incoming peer.
 	// Send an addr and receive an addr.
 	// Ignore inv messages.
@@ -915,7 +926,7 @@ func TestProcessAddr(t *testing.T) {
 		listeners := []string{net.JoinHostPort("", "8445")}
 		serv, err := TstNewServer(listeners, getMemDb([]wire.Message{}),
 			MockListen([]*MockListener{
-				NewMockListener(localAddr, make(chan bmpeer.Connection), make(chan struct{}))}))
+				NewMockListener(localAddr, incoming, make(chan struct{}))}))
 		if err != nil {
 			t.Fatal("Server failed to start.")
 		}
@@ -1112,7 +1123,7 @@ func randomShaHash() *wire.ShaHash {
 		listeners := []string{net.JoinHostPort("", "8445")}
 		serv, err = TstNewServer(listeners, getMemDb([]wire.Message{}),
 			MockListen([]*MockListener{
-				NewMockListener(localAddr, make(chan bmpeer.Connection), make(chan struct{}))}))
+				NewMockListener(localAddr, incoming, make(chan struct{}))}))
 		if err != nil {
 			t.Fatal("Server failed to start.")
 		}

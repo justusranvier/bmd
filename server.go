@@ -309,7 +309,7 @@ func (s *server) handleRelayInvMsg(msg relayMsg) {
 		// Queue the inventory to be relayed with the next batch.
 		// It will be ignored if the peer is already known to
 		// have the inventory.
-		p.QueueInventory(msg.invVect)
+		p.sendQueue.QueueInventory(msg.invVect)
 	})
 }
 
@@ -328,7 +328,7 @@ func (s *server) handleBroadcastMsg(bmsg *broadcastMsg) {
 			excluded = true
 		}
 		if !excluded {
-			p.QueueMessage(bmsg.message, nil)
+			p.QueueMessage(bmsg.message)
 		}
 	})
 }

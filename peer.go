@@ -8,7 +8,6 @@
 package main
 
 import (
-	"container/list"
 	"fmt"
 	prand "math/rand"
 	"net"
@@ -115,7 +114,7 @@ type outMsg struct {
 }
 
 // peer provides a bitmessage peer for handling bitmessage communications. The
-// overall data flow is split into 3 goroutines and a separate block manager.
+// overall data flow is split into 3 goroutines and a separate object manager.
 // Inbound messages are read via the inHandler goroutine and generally
 // dispatched to their own handler. For inbound data-related messages such as
 // blocks, transactions, and inventory, the data is passed on to the block
@@ -138,6 +137,7 @@ type peer struct {
 	connected         int32
 	disconnect        int32 // only to be used atomically
 	conn              bmpeer.Connection
+	sendQueue         bmpeer.SendQueue
 	addr              string
 	na                *wire.NetAddress
 	inbound           bool
@@ -148,12 +148,6 @@ type peer struct {
 	knownInvMutex     sync.Mutex
 	retryCount        int64
 	continueHash      *wire.ShaHash
-	outputQueue       chan outMsg
-	sendQueue         chan outMsg
-	sendDoneQueue     chan struct{}
-	queueWg           sync.WaitGroup // TODO(oga) wg -> single use channel?
-	outputInvChan     chan *wire.InvVect
-	quit              chan struct{}
 	StatsMtx          sync.Mutex // protects all statistics below here.
 	versionKnown      bool
 	versionSent       bool
@@ -238,7 +232,8 @@ func (p *peer) PushVersionMsg() error {
 	// Advertise our max supported protocol version.
 	msg.ProtocolVersion = maxProtocolVersion
 
-	p.QueueMessage(msg, nil)
+	p.QueueMessage(msg)
+	
 	p.versionSent = true
 	return nil
 }
@@ -272,54 +267,38 @@ func (p *peer) PushGetDataMsg(invVect []*wire.InvVect) {
 		i++
 		
 		if i == wire.MaxInvPerMsg {
-			p.QueueMessage(&wire.MsgGetData{newInvVect[:i]}, nil)
+			p.QueueMessage(&wire.MsgGetData{newInvVect[:i]})
 			i = 0
 			newInvVect = make([]*wire.InvVect, max(len(invVect), wire.MaxInvPerMsg))
 		}
 	}
 	
 	if i > 0 {
-		p.QueueMessage(&wire.MsgGetData{newInvVect[:i]}, nil)
+		p.QueueMessage(&wire.MsgGetData{newInvVect[:i]})
 	}
 }
 
 func (p *peer) PushInvMsg(invVect []*wire.InvVect) {
 	if len(invVect) > wire.MaxInvPerMsg {
-		p.QueueMessage(&wire.MsgInv{invVect[:wire.MaxInvPerMsg]}, nil)
+		p.QueueMessage(&wire.MsgInv{invVect[:wire.MaxInvPerMsg]})
 	} else {
-		p.QueueMessage(&wire.MsgInv{invVect}, nil)
+		p.QueueMessage(&wire.MsgInv{invVect})
 	}
 }
 
 // pushObjectMsg sends an object message for the provided object hash to the
 // connected peer.  An error is returned if the block hash is not known.
-func (p *peer) PushObjectMsg(sha *wire.ShaHash, doneChan, waitChan chan struct{}) error {
+func (p *peer) PushObjectMsg(sha *wire.ShaHash) error {
 	obj, err := p.server.db.FetchObjectByHash(sha)
 	if err != nil {
-		if doneChan != nil {
-			doneChan <- struct{}{}
-		}
 		return err
-	}
-
-	// Once we have fetched data wait for any previous operation to finish.
-	if waitChan != nil {
-		<-waitChan
-	}
-
-	// We only send the channel for this message if we aren't sending
-	// an inv straight after.
-	var dc chan struct{}
-	sendInv := p.continueHash != nil && p.continueHash.IsEqual(sha)
-	if !sendInv {
-		dc = doneChan
 	}
 	
 	msg, err := wire.DecodeMsgObject(obj)
 	if err != nil {
 		return err
 	}
-	p.QueueMessage(msg, dc)
+	p.QueueMessage(msg)
 
 	return nil
 }
@@ -361,9 +340,15 @@ func (p *peer) PushAddrMsg(addresses []*wire.NetAddress) error {
 			p.knownAddresses[addrmgr.NetAddressKey(na)] = struct{}{}
 		}
 
-		p.QueueMessage(msg, nil)
+		p.QueueMessage(msg)
 	}
 	return nil
+}
+
+func (p *peer) QueueMessage(msg wire.Message) {
+	if p.sendQueue.QueueMessage(msg) != nil {
+		p.Disconnect()
+	}
 }
 
 // updateAddresses potentially adds addresses to the address manager and
@@ -455,7 +440,7 @@ func (p *peer) handleVersionMsg(msg *wire.MsgVersion) {
 	}
 
 	// Send verack.
-	p.QueueMessage(wire.NewMsgVerAck(), nil)
+	p.QueueMessage(wire.NewMsgVerAck())
 
 	// Update the address manager.
 	p.updateAddresses(msg)
@@ -493,49 +478,12 @@ func (p *peer) handleInvMsg(msg *wire.MsgInv) {
 
 // handleGetData is invoked when a peer receives a getdata message and
 // is used to deliver object information.
+// TODO this function used to wait for each message to be sent so as to avid
+// using up too much memory. It still needs to be able to do that, but the
+// redesign of peer made it unable to work the way it was originally designed. 
 func (p *peer) handleGetDataMsg(msg *wire.MsgGetData) {
-	numAdded := 0
-
-	// We wait on the this wait channel periodically to prevent queueing
-	// far more data than we can send in a reasonable time, wasting memory.
-	// The waiting occurs after the database fetch for the next one to
-	// provide a little pipelining.
-	var waitChan chan struct{}
-	doneChan := make(chan struct{}, 1)
-
-	for i, iv := range msg.InvList {
-		var c chan struct{}
-		// If this will be the last message we send.
-		if i == len(msg.InvList)-1 {
-			c = doneChan
-		} else if (i+1)%3 == 0 {
-			// Buffered so as to not make the send goroutine block.
-			c = make(chan struct{}, 1)
-		}
-		err := p.PushObjectMsg(&iv.Hash, c, waitChan)
-
-		if err != nil {
-
-			// When there is a failure fetching the final entry
-			// and the done channel was sent in due to there
-			// being no outstanding not found inventory, consume
-			// it here because there is now not found inventory
-			// that will use the channel momentarily.
-			if i == len(msg.InvList)-1 && c != nil {
-				<-c
-			}
-		}
-		numAdded++
-		waitChan = c
-	}
-
-	// Wait for messages to be sent. We can send quite a lot of data at this
-	// point and this will keep the peer busy for a decent amount of time.
-	// We don't process anything else by them in this time so that we
-	// have an idea of when we should hear back from them - else the idle
-	// timeout could fire when we were only half done sending the blocks.
-	if numAdded > 0 {
-		<-doneChan
+	for _, iv := range msg.InvList {
+		p.PushObjectMsg(&iv.Hash)
 	}
 }
 
@@ -731,231 +679,6 @@ out:
 	p.server.donePeers <- p
 }
 
-// queueHandler handles the queueing of outgoing data for the peer. This runs
-// as a muxer for various sources of input so we can ensure that objectmanager
-// and the server goroutine both will not block on us sending a message.
-// We then pass the data on to outHandler to be actually written.
-func (p *peer) queueHandler() {
-	pendingMsgs := list.New()
-	invSendQueue := list.New()
-	trickleTicker := time.NewTicker(time.Second * 10)
-	defer trickleTicker.Stop()
-
-	// We keep the waiting flag so that we know if we have a message queued
-	// to the outHandler or not. We could use the presence of a head of
-	// the list for this but then we have rather racy concerns about whether
-	// it has gotten it at cleanup time - and thus who sends on the
-	// message's done channel. To avoid such confusion we keep a different
-	// flag and pendingMsgs only contains messages that we have not yet
-	// passed to outHandler.
-	waiting := false
-
-	// To avoid duplication below.
-	queuePacket := func(msg outMsg, list *list.List, waiting bool) bool {
-		if !waiting {
-			p.sendQueue <- msg
-		} else {
-			list.PushBack(msg)
-		}
-		// we are always waiting now.
-		return true
-	}
-out:
-	for {
-		select {
-		case msg := <-p.outputQueue:
-			waiting = queuePacket(msg, pendingMsgs, waiting)
-
-		// This channel is notified when a message has been sent across
-		// the network socket.
-		case <-p.sendDoneQueue:
-			// No longer waiting if there are no more messages
-			// in the pending messages queue.
-			next := pendingMsgs.Front()
-			if next == nil {
-				waiting = false
-				continue
-			}
-
-			// Notify the outHandler about the next item to
-			// asynchronously send.
-			val := pendingMsgs.Remove(next)
-			p.sendQueue <- val.(outMsg)
-
-		case iv := <-p.outputInvChan:
-			// No handshake?  They'll find out soon enough.
-			if p.VersionKnown() {
-				invSendQueue.PushBack(iv)
-			}
-
-		case <-trickleTicker.C:
-			// Don't send anything if we're disconnecting or there
-			// is no queued inventory.
-			// version is known if send queue has any entries.
-			if atomic.LoadInt32(&p.disconnect) != 0 ||
-				invSendQueue.Len() == 0 {
-				continue
-			}
-
-			// Create and send as many inv messages as needed to
-			// drain the inventory send queue.
-			invMsg := wire.NewMsgInv()
-			for e := invSendQueue.Front(); e != nil; e = invSendQueue.Front() {
-				iv := invSendQueue.Remove(e).(*wire.InvVect)
-
-				// Don't send inventory that became known after
-				// the initial check.
-				if p.isKnownInventory(iv) {
-					continue
-				}
-
-				invMsg.AddInvVect(iv)
-				if len(invMsg.InvList) >= maxInvTrickleSize {
-					waiting = queuePacket(
-						outMsg{msg: invMsg},
-						pendingMsgs, waiting)
-					invMsg = wire.NewMsgInv()
-				}
-
-				// Add the inventory that is being relayed to
-				// the known inventory for the peer.
-				p.AddKnownInventory(iv)
-			}
-			if len(invMsg.InvList) > 0 {
-				waiting = queuePacket(outMsg{msg: invMsg},
-					pendingMsgs, waiting)
-			}
-
-		case <-p.quit:
-			break out
-		}
-	}
-
-	// Drain any wait channels before we go away so we don't leave something
-	// waiting for us.
-	for e := pendingMsgs.Front(); e != nil; e = pendingMsgs.Front() {
-		val := pendingMsgs.Remove(e)
-		msg := val.(outMsg)
-		if msg.doneChan != nil {
-			msg.doneChan <- struct{}{}
-		}
-	}
-cleanup:
-	for {
-		select {
-		case msg := <-p.outputQueue:
-			if msg.doneChan != nil {
-				msg.doneChan <- struct{}{}
-			}
-		case <-p.outputInvChan:
-			// Just drain channel
-		// sendDoneQueue is buffered so doesn't need draining.
-		default:
-			break cleanup
-		}
-	}
-	p.queueWg.Done()
-}
-
-// outHandler handles all outgoing messages for the peer. It must be run as a
-// goroutine. It uses a buffered channel to serialize output messages while
-// allowing the sender to continue running asynchronously.
-func (p *peer) outHandler() {
-out:
-	for {
-		select {
-		case msg := <-p.sendQueue:
-			// If the message is one we should get a reply for
-			// then reset the timer. We specifically do not count inv
-			// messages here since they are not sure of a reply if
-			// the inv is of no interest explicitly solicited invs
-			// should elicit a reply but we don't track them
-			// specially.
-			switch msg.msg.(type) {
-			case *wire.MsgVersion:
-				// should get an ack
-			case *wire.MsgGetPubKey:
-				// should get a pubkey.
-			case *wire.MsgGetData:
-				// should get objects
-			default:
-				// Not one of the above, no sure reply.
-				// We want to ping if nothing else
-				// interesting happens.
-			}
-			err := p.conn.WriteMessage(msg.msg)
-			if err != nil {
-				p.Disconnect()
-			}
-			if msg.doneChan != nil {
-				msg.doneChan <- struct{}{}
-			}
-			p.sendDoneQueue <- struct{}{}
-		case <-p.quit:
-			break out
-		}
-	}
-
-	p.queueWg.Wait()
-
-	// Drain any wait channels before we go away so we don't leave something
-	// waiting for us. We have waited on queueWg and thus we can be sure
-	// that we will not miss anything sent on sendQueue.
-cleanup:
-	for {
-		select {
-		case msg := <-p.sendQueue:
-			if msg.doneChan != nil {
-				msg.doneChan <- struct{}{}
-			}
-			// no need to send on sendDoneQueue since queueHandler
-			// has been waited on and already exited.
-		default:
-			break cleanup
-		}
-	}
-}
-
-// QueueMessage adds the passed bitmessage message to the peer send queue. It
-// uses a buffered channel to communicate with the output handler goroutine so
-// it is automatically rate limited and safe for concurrent access.
-func (p *peer) QueueMessage(msg wire.Message, doneChan chan struct{}) {
-	// Avoid risk of deadlock if goroutine already exited. The goroutine
-	// we will be sending to hangs around until it knows for a fact that
-	// it is marked as disconnected. *then* it drains the channels.
-	if !p.Connected() {
-		// avoid deadlock...
-		if doneChan != nil {
-			go func() {
-				doneChan <- struct{}{}
-			}()
-		}
-		return
-	}
-	p.outputQueue <- outMsg{msg: msg, doneChan: doneChan}
-}
-
-// QueueInventory adds the passed inventory to the inventory send queue which
-// might not be sent right away, rather it is trickled to the peer in batches.
-// Inventory that the peer is already known to have is ignored. It is safe for
-// concurrent access.
-func (p *peer) QueueInventory(invVect *wire.InvVect) {
-	// Don't add the inventory to the send queue if the peer is
-	// already known to have it.
-	if p.isKnownInventory(invVect) {
-		return
-	}
-
-	// Avoid risk of deadlock if goroutine already exited. The goroutine
-	// we will be sending to hangs around until it knows for a fact that
-	// it is marked as disconnected. *then* it drains the channels.
-	if !p.Connected() {
-		return
-	}
-
-	p.outputInvChan <- invVect
-}
-
 // Connected returns whether or not the peer is currently connected.
 func (p *peer) Connected() bool {
 	return atomic.LoadInt32(&p.connected) != 0 &&
@@ -969,7 +692,11 @@ func (p *peer) Disconnect() {
 	if atomic.AddInt32(&p.disconnect, 1) != 1 {
 		return
 	}
-	close(p.quit)
+	
+	//The send que could possibly be nil if Start() was never called on this peer.
+	if p.sendQueue != nil {
+		p.sendQueue.Stop()
+	}
 	if atomic.LoadInt32(&p.connected) != 0 {
 		p.conn.Close()
 	}
@@ -982,6 +709,9 @@ func (p *peer) Start() error {
 	if atomic.AddInt32(&p.started, 1) != 1 {
 		return nil
 	}
+
+	p.sendQueue = bmpeer.NewSendQueue(p.conn, p.server.db)
+	p.sendQueue.Start()
 
 	// Send an initial version message if this is an outbound connection.
 	if !p.inbound {
@@ -996,11 +726,6 @@ func (p *peer) Start() error {
 
 	// Start processing input and output.
 	go p.inHandler()
-	// queueWg is kept so that outHandler knows when the queue has exited so
-	// it can drain correctly.
-	p.queueWg.Add(1)
-	go p.queueHandler()
-	go p.outHandler()
 
 	return nil
 }
@@ -1029,11 +754,6 @@ func newPeerBase(s *server, inbound bool) *peer {
 		inbound:         inbound,
 		knownAddresses:  make(map[string]struct{}),
 		knownInventory:  NewMruInventoryMap(maxKnownInventory),
-		outputQueue:     make(chan outMsg, outputBufferSize),
-		sendQueue:       make(chan outMsg, 1),   // nonblocking sync
-		sendDoneQueue:   make(chan struct{}, 1), // nonblocking sync
-		outputInvChan:   make(chan *wire.InvVect, outputBufferSize),
-		quit:            make(chan struct{}),
 	}
 	return &p
 }

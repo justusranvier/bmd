@@ -1,7 +1,13 @@
+// Copyright (c) 2015 Monetas.
+// Use of this source code is governed by an ISC
+// license that can be found in the LICENSE file.
+
 package bmpeer
 
 import (
 	"net"
+	"time"
+	"sync/atomic"
 )
 
 // TstNewConnection is used to create a new connection with a mock conn instead 
@@ -33,4 +39,37 @@ func TstSwapListen(f func(string, string) (net.Listener, error)) func(string, st
 	g := listen
 	listen = f
 	return g
+}
+
+// TstStart is a special way to start the SendQueue without starting the queue
+// handler for testing purposes. 
+func (sq *sendQueue) tstStart() {
+	// Wait in case the object is resetting.
+	sq.resetWg.Wait()
+
+	// Already starting?
+	if atomic.AddInt32(&sq.started, 1) != 1 {
+		return
+	}
+	
+	// When all three go routines are done, the wait group will unlock.
+	sq.doneWg.Add(3)
+	
+	// Start the three main go routines.
+	go sq.outHandler()
+	go sq.dataRequestHandler()
+}
+
+// TstStartQueueHandler allows for starting the queue handler with a special
+// ticker for testing purposes. 
+func (sq *sendQueue) tstStartQueueHandler(trickleTicker *time.Ticker) {
+	go sq.queueHandler(trickleTicker)
+}
+
+func TstStart(sq SendQueue) {
+	sq.(*sendQueue).tstStart()
+}
+ 
+func TstStartQueueHandler(sq SendQueue, trickleTicker *time.Ticker) {
+	sq.(*sendQueue).tstStartQueueHandler(trickleTicker)
 }
