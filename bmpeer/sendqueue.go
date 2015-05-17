@@ -15,7 +15,6 @@ import (
 	"container/list"
 	
 	"github.com/monetas/bmutil/wire"
-	"github.com/monetas/bmd/database"
 )
 
 // 
@@ -28,9 +27,9 @@ type SendQueue interface {
     // might not be sent right away, rather it is trickled to the peer in batches.
     // Inventory that the peer is already known to have is ignored. It is safe for
     // concurrent access.
-	QueueInventory(*wire.InvVect) error
+	QueueInventory([]*wire.InvVect) error
 	
-	Start()
+	Start(conn Connection)
 	Running() bool
 	Stop()
 }
@@ -43,7 +42,7 @@ type sendQueue struct {
 	//
 	msgQueue      chan wire.Message
 	dataQueue     chan wire.Message
-	outputInvChan chan *wire.InvVect
+	outputInvChan chan []*wire.InvVect
 	requestQueue  chan []*wire.InvVect
 	quit          chan struct{}
 	resetWg       sync.WaitGroup
@@ -51,8 +50,8 @@ type sendQueue struct {
 
 	// An internet connection to another bitmessage node.
 	conn          Connection
-	// The database containing the known objects. 
-	db            database.Db
+	// The inventory containing the known objects. 
+	inventory     *Inventory
 	
 	// The state of the send queue.
 	started       int32
@@ -85,7 +84,7 @@ func (sq *sendQueue) QueueDataRequest(inv []*wire.InvVect) error {
 	}
 }
 
-func (sq *sendQueue) QueueInventory(inv *wire.InvVect) error {
+func (sq *sendQueue) QueueInventory(inv []*wire.InvVect) error {
 	if !sq.Running() {
 		return errors.New("Not running.")
 	}
@@ -98,7 +97,7 @@ func (sq *sendQueue) QueueInventory(inv *wire.InvVect) error {
 	}
 }
 
-func (sq *sendQueue) Start() {
+func (sq *sendQueue) Start(conn Connection) {
 	// Wait in case the object is resetting.
 	sq.resetWg.Wait()
 
@@ -109,6 +108,7 @@ func (sq *sendQueue) Start() {
 	
 	// When all three go routines are done, the wait group will unlock.
 	sq.doneWg.Add(3)
+	sq.conn = conn
 	
 	// Start the three main go routines.
 	go sq.outHandler()
@@ -167,22 +167,6 @@ clean2:
 	} ()
 }
 
-//TODO we actually end up decoding the message and then encoding it again when
-// it is sent. That is not necessary. 
-func (sq *sendQueue) retrieveData(hash *wire.ShaHash) wire.Message {
-	obj, err := sq.db.FetchObjectByHash(hash)
-	if err != nil {
-		return nil
-	}
-	
-	msg, err := wire.DecodeMsgObject(obj)
-	if err != nil {
-		return nil
-	}
-
-	return msg
-}
-
 // Must be run as a go routine.
 func (sq *sendQueue) dataRequestHandler() {
 out:
@@ -192,7 +176,7 @@ out:
 			break out
 		case invList := <- sq.requestQueue:
 			for _, inv := range invList {
-				msg := sq.retrieveData(&inv.Hash)
+				msg := sq.inventory.RetrieveObject(inv)
 				if msg != nil {
 					sq.dataQueue <- msg
 				}
@@ -233,24 +217,16 @@ out:
 			// drain the inventory send queue.
 			invMsg := wire.NewMsgInv()
 			for e := invSendQueue.Front(); e != nil; e = invSendQueue.Front() {
-				iv := invSendQueue.Remove(e).(*wire.InvVect)
-
-				// TODO
-				// Don't send inventory that became known after
-				// the initial check.
-				//if sq.isKnownInventory(iv) {
-				//	continue
-				//}
-
-				invMsg.AddInvVect(iv)
-				if len(invMsg.InvList) >= maxInvTrickleSize {
-					sq.msgQueue <- invMsg
-					invMsg = wire.NewMsgInv()
+				ivl := sq.inventory.FilterKnown(invSendQueue.Remove(e).([]*wire.InvVect))
+	
+				for _, iv := range ivl {
+					invMsg.AddInvVect(iv)
+					if len(invMsg.InvList) >= maxInvTrickleSize {
+						sq.msgQueue <- invMsg
+						invMsg = wire.NewMsgInv()
+					}
 				}
 
-				// Add the inventory that is being relayed to
-				// the known inventory for the peer.
-				//sq.AddKnownInventory(iv)
 			}
 			if len(invMsg.InvList) > 0 {
 				sq.msgQueue <- invMsg
@@ -298,16 +274,15 @@ out:
 	sq.doneWg.Done()
 }
 
-func NewSendQueue(conn Connection, db database.Db) SendQueue {
+func NewSendQueue(inventory *Inventory) SendQueue {
 	return &sendQueue{
 		trickleTime:   time.Second * 10, 
 		// TODO I just arbitrarly put 20 here. 
 		msgQueue:      make(chan wire.Message, 20), 
 		dataQueue:     make(chan wire.Message, 20), 
-		outputInvChan: make(chan *wire.InvVect, outputBufferSize), 
+		outputInvChan: make(chan []*wire.InvVect, outputBufferSize), 
 		requestQueue:  make(chan []*wire.InvVect, outputBufferSize), 
 		quit:          make(chan struct{}), 
-		conn:          conn, 
-		db:            db,
+		inventory:     inventory,
 	}
 }

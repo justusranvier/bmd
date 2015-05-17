@@ -222,11 +222,11 @@ func TestStartStop(t *testing.T) {
 	conn := NewMockConnection()
 	db := NewMockDb()
 	
-	queue := bmpeer.NewSendQueue(conn, db)
+	queue := bmpeer.NewSendQueue(bmpeer.NewInventory(db))
 	
-	queue.Start()
+	queue.Start(conn)
 	queue.Stop()
-	queue.Start()
+	queue.Start(conn)
 	
 	// TODO
 	// Start the the thing twice at the same time 
@@ -239,7 +239,7 @@ func TestSendMessage(t *testing.T) {
 	db := NewMockDb()
 	var err error
 	
-	queue := bmpeer.NewSendQueue(conn, db)
+	queue := bmpeer.NewSendQueue(bmpeer.NewInventory(db))
 	
 	message := &wire.MsgVerAck{}
 	
@@ -249,7 +249,7 @@ func TestSendMessage(t *testing.T) {
 		t.Errorf("No error returned when queue is not running.")
 	}
 	
-	queue.Start()
+	queue.Start(conn)
 	
 	err = queue.QueueMessage(message)
 	if err != nil {
@@ -276,7 +276,7 @@ func TestSendMessage(t *testing.T) {
 	}
 	conn.SetFailure(false)
 	
-	queue.Start()
+	queue.Start(conn)
 	
 	// Engineer a situation in which the message channel gets filled up
 	// and must be cleaned out.
@@ -307,7 +307,7 @@ func TestSendMessage(t *testing.T) {
 	} ()
 	
 	//Start the queue again to make sure it shuts down properly before the test ends.
-	queue.Start()
+	queue.Start(conn)
 	close(reset)
 }
 
@@ -316,7 +316,7 @@ func TestRequestData(t *testing.T) {
 	db := NewMockDb()
 	var err error
 	
-	queue := bmpeer.NewSendQueue(conn, db)
+	queue := bmpeer.NewSendQueue(bmpeer.NewInventory(db))
 	
 	message := wire.NewMsgUnknownObject(345, time.Now(), wire.ObjectType(4), 1, 1, []byte{77, 82, 53, 48, 96, 1})
 	
@@ -331,7 +331,7 @@ func TestRequestData(t *testing.T) {
 		t.Errorf("No error returned when queue is not running.")
 	}
 	
-	queue.Start()
+	queue.Start(conn)
 	
 	err = queue.QueueDataRequest(hashes)
 	if err != nil {
@@ -348,6 +348,7 @@ func TestRequestData(t *testing.T) {
 	// that isn't a valid message. These don't return errors, but they are here
 	// for code coverage. In order to ensure that the queue behaves correctly, 
 	// we send a regular message after and receive it.
+	// TODO check that the returned messages are as expected.
 	badData := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 0}
 	badHash, _ := wire.NewShaHash(bmutil.CalcInventoryHash(badData))
 	badHashes := []*wire.InvVect{&wire.InvVect{*badHash}}
@@ -402,7 +403,7 @@ func TestRequestData(t *testing.T) {
 	
 	//Start the queue again to make sure it shuts down properly before the test ends.
 	db.Unlock()
-	queue.Start()
+	queue.Start(conn)
 	close(reset)
 	
 	fmt.Println("###About to try the other thing with the stuff.")
@@ -438,7 +439,7 @@ func TestRequestData(t *testing.T) {
 	} ()
 	
 	//Start the queue again to make sure it shuts down properly before the test ends.
-	queue.Start()
+	queue.Start(conn)
 	close(reset)
 	fmt.Println("###Test complete.")
 }
@@ -462,10 +463,10 @@ func TestQueueInv(t *testing.T) {
 	db := NewMockDb()
 	
 	var err error
-	queue := bmpeer.NewSendQueue(conn, db)
+	queue := bmpeer.NewSendQueue(bmpeer.NewInventory(db))
 	
 	// The queue isn't running yet, so this should return an error.
-	err = queue.QueueInventory(&wire.InvVect{*randomShaHash()})
+	err = queue.QueueInventory([]*wire.InvVect{&wire.InvVect{*randomShaHash()}})
 	if err == nil {
 		t.Errorf("No error returned when queue is not running.")
 	}
@@ -480,20 +481,20 @@ func TestQueueInv(t *testing.T) {
 	} ()
 	
 	// First send a tick without any invs having been sent. 
-	bmpeer.TstStart(queue)
+	bmpeer.TstStart(queue, conn)
 	bmpeer.TstStartQueueHandler(queue, ticker)
 	time.Sleep(time.Millisecond * 50)
 	tickerChan <- time.Now()
 	
 	queue.Stop()
 	fmt.Println("####Got through first test.")
-	bmpeer.TstStart(queue)
+	bmpeer.TstStart(queue, conn)
 	close(reset)
 	bmpeer.TstStartQueueHandler(queue, ticker)
 	
 	// Send an inv and try to get an inv message. 
 	inv := &wire.InvVect{*randomShaHash()}
-	queue.QueueInventory(inv)
+	queue.QueueInventory([]*wire.InvVect{inv})
 	time.Sleep(time.Millisecond * 50)
 	tickerChan <- time.Now()
 	msg := conn.MockRead(nil)
@@ -509,12 +510,12 @@ func TestQueueInv(t *testing.T) {
 	}
 	
 	queue.Stop()
-	bmpeer.TstStart(queue)
+	bmpeer.TstStart(queue, conn)
 
 	// Fill up the channel. 
 	i := 0
 	for {
-		err = queue.QueueInventory(&wire.InvVect{*randomShaHash()})
+		err = queue.QueueInventory([]*wire.InvVect{&wire.InvVect{*randomShaHash()}})
 		if i == 50 {
 			break
 		}
@@ -529,7 +530,7 @@ func TestQueueInv(t *testing.T) {
 	
 	bmpeer.TstStartQueueHandler(queue, ticker)
 	queue.Stop()
-	bmpeer.TstStart(queue)
+	bmpeer.TstStart(queue, conn)
 	
 	// TODO
 	// Require more than one inv be sent in a row. 

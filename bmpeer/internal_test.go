@@ -43,7 +43,7 @@ func TstSwapListen(f func(string, string) (net.Listener, error)) func(string, st
 
 // TstStart is a special way to start the SendQueue without starting the queue
 // handler for testing purposes. 
-func (sq *sendQueue) tstStart() {
+func (sq *sendQueue) tstStart(conn Connection) {
 	// Wait in case the object is resetting.
 	sq.resetWg.Wait()
 
@@ -54,6 +54,7 @@ func (sq *sendQueue) tstStart() {
 	
 	// When all three go routines are done, the wait group will unlock.
 	sq.doneWg.Add(3)
+	sq.conn = conn
 	
 	// Start the three main go routines.
 	go sq.outHandler()
@@ -66,8 +67,8 @@ func (sq *sendQueue) tstStartQueueHandler(trickleTicker *time.Ticker) {
 	go sq.queueHandler(trickleTicker)
 }
 
-func TstStart(sq SendQueue) {
-	sq.(*sendQueue).tstStart()
+func TstStart(sq SendQueue, conn Connection) {
+	sq.(*sendQueue).tstStart(conn)
 }
  
 func TstStartQueueHandler(sq SendQueue, trickleTicker *time.Ticker) {

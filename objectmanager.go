@@ -99,7 +99,7 @@ func (b *objectManager) handleNewPeerMsg(peers *list.List, p *peer) {
 // is invoked from the syncHandler goroutine.
 func (om *objectManager) handleDonePeerMsg(peers *list.List, p *peer) {
 	// Remove the peer from the list of candidate peers.
-	for e := peers.Front(); e != nil; e = e.Next() {
+	/*for e := peers.Front(); e != nil; e = e.Next() {
 		if e.Value == p {
 			peers.Remove(e)
 			break
@@ -118,7 +118,7 @@ func (om *objectManager) handleDonePeerMsg(peers *list.List, p *peer) {
 	// and request them now to speed things up a little.
 	for k := range p.requestedObjects {
 		delete(om.requestedObjects, k)
-	}
+	}*/
 }
 
 // handleObjectMsg handles transaction messages from all peers.
@@ -149,7 +149,7 @@ func (om *objectManager) haveInventory(invVect *wire.InvVect) (bool, error) {
 // handleInvMsg handles inv messages from all peers.
 // We examine the inventory advertised by the remote peer and act accordingly.
 func (om *objectManager) handleInvMsg(imsg *invMsg) {
-	requestQueue := make([]*wire.InvVect, len(imsg.inv.InvList))
+	/*requestQueue := make([]*wire.InvVect, len(imsg.inv.InvList))
 
 	// Request the advertised inventory if we don't already have it.  
 	var i int = 0
@@ -168,7 +168,7 @@ func (om *objectManager) handleInvMsg(imsg *invMsg) {
 		}
 	}
 
-	imsg.peer.PushGetDataMsg(requestQueue)
+	imsg.peer.PushGetDataMsg(requestQueue)*/
 }
 
 // objectHandler is the main handler for the object manager.  It must be run

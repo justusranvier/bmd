@@ -300,7 +300,8 @@ func (s *server) handleBanPeerMsg(p *peer) {
 
 // handleRelayInvMsg deals with relaying inventory to peers that are not already
 // known to have it. It is invoked from the peerHandler goroutine.
-func (s *server) handleRelayInvMsg(msg relayMsg) {
+// TODO
+/*func (s *server) handleRelayInvMsg(msg relayMsg) {
 	s.state.forAllPeers(func(p *peer) {
 		if !p.Connected() {
 			return
@@ -311,7 +312,7 @@ func (s *server) handleRelayInvMsg(msg relayMsg) {
 		// have the inventory.
 		p.sendQueue.QueueInventory(msg.invVect)
 	})
-}
+}*/
 
 // handleBroadcastMsg deals with broadcasting messages to peers. It is invoked
 // from the peerHandler goroutine.
@@ -523,8 +524,9 @@ out:
 			s.handleBanPeerMsg(p)
 
 		// New inventory to potentially be relayed to other peers.
-		case invMsg := <-s.relayInv:
-			s.handleRelayInvMsg(invMsg)
+		// TODO
+		//case invMsg := <-s.relayInv:
+		//	s.handleRelayInvMsg(invMsg)
 
 		// Message to broadcast to all connected peers except those
 		// which are excluded by the message.

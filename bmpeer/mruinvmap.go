@@ -5,7 +5,7 @@
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
-package main
+package bmpeer
 
 import (
 	"container/list"
@@ -56,10 +56,7 @@ func (m *MruInventoryMap) Add(iv *wire.InvVect) {
 	// node so a new one doesn't have to be allocated.
 	if uint(len(m.invMap))+1 > m.limit {
 		node := m.invList.Back()
-		lru, ok := node.Value.(*wire.InvVect)
-		if !ok {
-			return
-		}
+		lru, _ := node.Value.(*wire.InvVect)
 
 		// Evict least recently used item.
 		delete(m.invMap, *lru)
@@ -84,6 +81,23 @@ func (m *MruInventoryMap) Delete(iv *wire.InvVect) {
 		m.invList.Remove(node)
 		delete(m.invMap, *iv)
 	}
+}
+
+// Filter takes a slice of values and adds those to the map that don't already exist.
+// It returns a slice containing only the values that were added. 
+func (m *MruInventoryMap) Filter(invs []*wire.InvVect) []*wire.InvVect {
+	filtered := make([]*wire.InvVect, len(invs))
+	
+	i := 0
+	for _, inv := range invs {
+		if !m.Exists(inv) {
+			m.Add(inv)
+			filtered[i] = inv
+			i ++ 
+		}
+	}
+	
+	return filtered[:i]
 }
 
 // NewMruInventoryMap returns a new inventory map that is limited to the number

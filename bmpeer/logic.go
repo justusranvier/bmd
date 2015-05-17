@@ -22,10 +22,10 @@ type Logic interface {
 	HandleGetDataMsg(*wire.MsgGetData) error
 	HandleObjectMsg(wire.Message) error
 
-	PushVersionMsg() error
-	PushVerAckMsg() error
+	PushVersionMsg()
+	PushVerAckMsg()
 	PushAddrMsg(addresses []*wire.NetAddress)
-	PushInvMsg(invVect []*wire.InvVect)
+	PushInvMsg(invVect []*wire.InvVect) 
 	PushGetDataMsg(invVect []*wire.InvVect)
 	PushObjectMsg(sha *wire.ShaHash)
 }

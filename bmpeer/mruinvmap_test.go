@@ -1,0 +1,114 @@
+package bmpeer_test
+
+import (
+	"testing"
+
+	"github.com/monetas/bmd/bmpeer"
+	"github.com/monetas/bmutil/wire"
+)
+
+func TestNew(t *testing.T) {
+	if bmpeer.NewMruInventoryMap(2) == nil{
+		t.Error("Should have returned an inv map.")
+	}
+}
+
+func TestString(t *testing.T) {
+	hasha, _ := wire.NewShaHash([]byte{0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1})
+	hashb, _ := wire.NewShaHash([]byte{0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,200})
+	a := &wire.InvVect{*hasha}
+	b := &wire.InvVect{*hashb}
+
+	m := bmpeer.NewMruInventoryMap(2)
+	m.Add(a)
+	m.Add(b)
+	
+	// No good way to actually test that the string comes out right. 
+	str := m.String()
+	//t.Error("String expected:",str)
+	
+	if str[:74] != "<2>map[{0000000000000000000000000000000000000000000000000000000000000001}:" &&
+	  str[87:154] != "{00000000000000000000000000000000000000000000000000000000000000c8}:" {
+		t.Error("Incorrect string returned.")
+	}
+}
+
+
+func TestMruInvMap(t *testing.T) {
+	a := &wire.InvVect{*randomShaHash()}
+	b := &wire.InvVect{*randomShaHash()}
+	c := &wire.InvVect{*randomShaHash()}
+
+	m := bmpeer.NewMruInventoryMap(2)
+	
+	if m.Exists(a) {
+		t.Error("Map should be empty.")
+	}
+	
+	m.Add(a)
+	if !m.Exists(a) {
+		t.Error("Map should not be empty..")
+	}
+	m.Add(b)
+	m.Add(c)
+	
+	// Now the map should be missing a and have both b and c. 
+	if m.Exists(a) {
+		t.Error("Element should have been knocked out.")
+	}
+	
+	if !m.Exists(b) {
+		t.Error("Element should be present.")
+	}
+	
+	m.Delete(b)
+	if m.Exists(b) {
+		t.Error("Element was deleted and should not be present.")
+	}
+	m.Add(c)
+	if !m.Exists(c) {
+		t.Error("Element should be present.")
+	}
+}
+
+// TestAdd0 tests the case in which an entry is added to a map of size 0.
+func TestAdd0(t *testing.T) {
+	a := &wire.InvVect{*randomShaHash()}
+	//b := &wire.InvVect{*randomShaHash()}
+	//c := &wire.InvVect{*randomShaHash()}
+
+	m := bmpeer.NewMruInventoryMap(0)
+	if m.Exists(a) {
+		t.Error("Map should be empty.")
+	}
+	
+	m.Add(a)
+	if m	.Exists(a) {
+		t.Error("Map should still be empty.")
+	}
+}
+
+func TestFilter(t *testing.T) {
+	a := &wire.InvVect{*randomShaHash()}
+	b := &wire.InvVect{*randomShaHash()}
+	c := &wire.InvVect{*randomShaHash()}
+	
+	m := bmpeer.NewMruInventoryMap(3)
+	m.Add(a)
+	
+	ret := m.Filter([]*wire.InvVect{a, b, c})
+	
+	if len(ret) != 2 {
+		t.Errorf("Filtered list has the wrong size. Got %d expected %d.", len(ret), 2)
+	}
+	if ret[0] != b {
+		t.Error("Wrong filtered list returned.")
+	}
+	
+	if !m.Exists(b) {
+		t.Error("Element should be present.")
+	}
+	if !m.Exists(c) {
+		t.Error("Element should be present.")
+	}
+}

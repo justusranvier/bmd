@@ -207,172 +207,158 @@ func NewInboundHandshakePeerTester(openingMsg *PeerAction, addrAction *PeerActio
 // DataExchangePeerTester implements the PeerTest interface and tests the exchange 
 // of inv messages and data. 
 type DataExchangePeerTester struct {
-	verackReceived bool
-	versionReceived bool
-	handshakeComplete bool
-	objectSent bool
-	objectReceived bool
-	openMsg *PeerAction
+	dataSent bool
+	dataReceived bool
+	invReceived bool
 	invAction *PeerAction
-	inventory map[wire.ShaHash]wire.Message     // The initial inventory of the mock peer. 
-	peerInventory map[wire.ShaHash]wire.Message // The initial inventory of the real peer. 
-	requested map[wire.ShaHash]wire.Message     // The messages that were requested. 
+	inventory map[wire.InvVect]wire.Message // The initial inventory of the mock peer. 
+	peerInventory map[wire.InvVect]struct{}  // The initial inventory of the real peer. 
+	requested map[wire.InvVect]struct{}      // The messages that were requested. 
 }
 
 func (peer *DataExchangePeerTester) OnStart() *PeerAction {
-	return peer.openMsg
+	return peer.invAction
 }
 
 func (peer *DataExchangePeerTester) OnMsgVersion(version *wire.MsgVersion) *PeerAction {
-	if peer.versionReceived {
-		return &PeerAction{Err :errors.New("Two versions received?")}
-	}
-	peer.versionReceived = true
-	if peer.verackReceived {
-		// Handshake completed successfully
-		peer.handshakeComplete = true
-		
-		// Send an inv message.
-		return peer.invAction
-	}
-	return &PeerAction{[]wire.Message{&wire.MsgVerAck{}}, nil, false, false}
+	return &PeerAction{Err :errors.New("This test should begin with handshake already done.")}
 }
 
 func (peer *DataExchangePeerTester) OnMsgVerAck(p *wire.MsgVerAck) *PeerAction {
-	if peer.verackReceived {
-		return &PeerAction{Err:errors.New("Two veracks received?")}
-	}
-	peer.verackReceived = true
-	if peer.versionReceived {
-		// Handshake completed successfully
-		peer.handshakeComplete = true
-
-		// 
-		return peer.invAction
-	}
-	// Return nothing and await a version message.
-	return &PeerAction{nil, nil, false, false}
+	return &PeerAction{Err :errors.New("This test should begin with handshake already done.")}
 }
 
 func (peer *DataExchangePeerTester) OnMsgAddr(p *wire.MsgAddr) *PeerAction {
-	if peer.handshakeComplete {
-		return nil
-	} else {
-		return &PeerAction{Err: errors.New("Not allowed before handshake is complete.")}
-	}
+	return nil
 }
 
 func (peer *DataExchangePeerTester) OnMsgInv(inv *wire.MsgInv) *PeerAction {
-	if peer.handshakeComplete {
-		if len(inv.InvList) == 0 {
-			return &PeerAction{Err: errors.New("Empty inv message received.")}
-		}		
-		
-		// TODO Construct the get data method. 
-		getData := wire.NewMsgGetData()
-		
-		return &PeerAction {
-			Messages : []wire.Message{getData},
+	if peer.invReceived {
+		return &PeerAction{Err: errors.New("Inv message allready received.")}
+	}
+	
+	peer.invReceived = true
+	
+	if len(inv.InvList) == 0 {
+		return &PeerAction{Err: errors.New("Empty inv message received.")}
+	}
+	
+	if len(inv.InvList) > wire.MaxInvPerMsg {
+		return &PeerAction{Err: errors.New("Excessively long inv message received.")}
+	}
+	
+	// Return a get data message that requests the entries in inv which are not already known. 
+	i := 0
+	var ok bool
+	duplicate := make(map[wire.InvVect]struct{})
+	newInvList := make([]*wire.InvVect, len(inv.InvList))
+	for _, iv := range inv.InvList {
+		if _, ok = peer.inventory[*iv]; !ok {
+			if _, ok = duplicate[*iv]; ok {
+				return &PeerAction{Err: errors.New("Inv with duplicates received.")}
+			}
+			duplicate[*iv] = struct{}{}
+			newInvList[i] = iv
+			peer.requested[*iv] = struct{}{}
 		}
-	} else {
-		return &PeerAction{Err: errors.New("Not allowed before handshake is complete.")}
+	}
+		
+	return &PeerAction {
+		Messages : []wire.Message{&wire.MsgGetData{newInvList[:i]}},
 	}
 }
 
 func (peer *DataExchangePeerTester) OnMsgGetData(getData *wire.MsgGetData) *PeerAction {
-	if peer.handshakeComplete {
-		if len(getData.InvList) < 1 || len(getData.InvList) > 50000 {
-			return &PeerAction{Err: errors.New("Invalid get data message.")}
-		}
+	
+	if len(getData.InvList) == 0 {
+		return &PeerAction{Err: errors.New("Empty GetData message received.")}
+	}
+	
+	if len(getData.InvList) > wire.MaxInvPerMsg {
+		return &PeerAction{Err: errors.New("Excessively long GetData message received.")}
+	}
 		
-		// The get data message should include no duplicates and should include nothing
-		// that the peer already knows. 
-		data := make(map[wire.ShaHash]wire.Message)
-		for _, invVect := range getData.InvList {
-			if _, ok := data[invVect.Hash]; ok {
-				return &PeerAction{Err: errors.New("GetData request returned with duplicate entries.")}
-			}
-			
-			if _, ok := peer.peerInventory[invVect.Hash]; ok {
-				return &PeerAction{Err: errors.New("Peer requested data that it already has.")}
-			}
-			
-			datum, ok := peer.inventory[invVect.Hash]
-			if !ok {
-				return &PeerAction{Err: errors.New("Peer requested data that the mock peer does not have.")}
-			}
-			
-			data[invVect.Hash] = datum
-		}
-		
-		messages := make([]wire.Message, len(data))
-		i := 0
-		for _, datum := range data {
-			messages[i] = datum
-			i++
-		}
-
-		peer.objectSent = true
-
-		if peer.objectReceived {
-			return &PeerAction{messages, nil, true, false}
+	// The get data message should include no duplicates and should include nothing
+	// that the peer already knows, and nothing that the mock peer doesn't know. 
+	i := 0
+	duplicate := make(map[wire.InvVect]struct{})
+	messages := make([]wire.Message, len(getData.InvList))
+	for _, iv := range getData.InvList {
+		if msg, ok := peer.inventory[*iv]; !ok {
+			return &PeerAction{Err: errors.New("GetData asked for something we don't know.")}
 		} else {
-			return &PeerAction{messages, nil, false, false}
+			if _, ok := duplicate[*iv]; ok {
+				return &PeerAction{Err: errors.New("GetData with duplicates received.")}
+			}
+			duplicate[*iv] = struct{}{}
+			messages[i] = msg
+			peer.peerInventory[*iv] = struct{}{}
 		}
+	}
+
+	peer.dataSent = true
+
+	if peer.dataReceived {
+		return &PeerAction{messages, nil, true, false}
 	} else {
-		return &PeerAction{Err: errors.New("Not allowed before handshake is complete.")}
+		return &PeerAction{messages, nil, false, false}
 	}
 }
 
-func (peer *DataExchangePeerTester) OnMsgObject(message wire.Message) *PeerAction {
-	if peer.handshakeComplete {
+func (peer *DataExchangePeerTester) OnSendData(invVect []*wire.InvVect) *PeerAction {
+	if !peer.invReceived {
+		return &PeerAction{Err: errors.New("Object message not allowed before exchange of invs.")}
+	}
 
-		hash, _ := wire.MessageHash(message)
-		if _, ok := peer.requested[*hash]; !ok {
-			return &PeerAction{Err : errors.New("Sent unrequested object.")}
+	// The objects must have been requested. 
+	for _, iv := range invVect {
+		if _, ok := peer.requested[*iv]; !ok {
+			return &PeerAction{Err: errors.New("Object message not allowed before handshake is complete.")}
 		}
-		delete(peer.requested, *hash)
-		
-		if(len(peer.requested) == 0) {
-			peer.objectReceived = true
-		}
-		
-		if peer.objectSent {
-			// Exchange has completed successfully. 
-			return &PeerAction{nil, nil, true, false}
-		} else {
-			return nil
-		}
+		delete(peer.requested, *iv)
+	}
+	
+	if len(peer.requested) == 0 {
+		peer.dataReceived = true
+	}
+
+	if peer.dataReceived && peer.dataSent {
+		return &PeerAction{nil, nil, true, false}
 	} else {
-		return &PeerAction{Err: errors.New("Object message not allowed before handshake is complete.")}
+		return &PeerAction{nil, nil, false, false}
 	}
 }
 
-func NewDataExchangePeerTester(openMsg *PeerAction, inventory []wire.Message, peerInventory []wire.Message, invAction *PeerAction) *DataExchangePeerTester {
+func NewDataExchangePeerTester(inventory []wire.Message, peerInventory []wire.Message, invAction *PeerAction) *DataExchangePeerTester {
 	// Catalog the initial inventories of the mock peer and real peer. 
-	in := make(map[wire.ShaHash]wire.Message)
-	pin := make(map[wire.ShaHash]wire.Message)
+	in := make(map[wire.InvVect]wire.Message)
+	pin := make(map[wire.InvVect]struct{})
+	invMsg := wire.NewMsgInv()
 	for _, message := range inventory {
 		hash, _ := wire.MessageHash(message)
-		in[*hash] = message
+		inv := wire.InvVect{*hash}
+		invMsg.AddInvVect(&inv)
+		in[inv] = message
 	}
 	for _, message := range peerInventory {
 		hash, _ := wire.MessageHash(message)
-		pin[*hash] = message
+		inv := wire.InvVect{*hash}
+		pin[inv] = struct{}{}
 	}
 	
+	var inva *PeerAction
 	if invAction == nil {
-		// TODO construct an inv action based on the given inventory. 
+		inva = &PeerAction{
+			Messages : []wire.Message{&wire.MsgVerAck{}, invMsg},
+		}
+	} else {
+		inva = invAction
 	}
 	
 	return &DataExchangePeerTester{
-		verackReceived : false, 
-		versionReceived : false, 
-		handshakeComplete : false, 
-		openMsg : openMsg, 
 		inventory : in, 
 		peerInventory : pin, 
-		invAction : invAction, 
+		invAction : inva, 
 	}
 }
 
@@ -451,7 +437,7 @@ func (mock *MockConnection) WriteMessage(rmsg wire.Message) error {
 	return nil
 }
 
-func (mock *MockConnection) QueueDataRequest(invVect []*wire.InvVect) error {
+func (mock *MockConnection) RequestData(invVect []*wire.InvVect) error {
 	// We can keep receiving messages after the interaction is done; we just ignore them.	
 	// We are waiting to see whether the peer disconnects.
 	if mock.interactionComplete {
@@ -460,11 +446,6 @@ func (mock *MockConnection) QueueDataRequest(invVect []*wire.InvVect) error {
 	
 	mock.timer.Reset(time.Second)
 	mock.handleAction(mock.peerTest.OnSendData(invVect))
-	return nil
-}
-
-// We ignore new inventory because that sort of thing isn't handled by this set of tests.
-func (mock *MockConnection) QueueInventory(inv *wire.InvVect) error {
 	return nil
 }
 
@@ -856,7 +837,7 @@ func TestInboundPeerHandshake(t *testing.T) {
 //  * after a successful handshake, get an addr and receive one. 
 //  * error case: send an addr message that is too big. 
 //  * Give the peer no addresses to send. 
-func TestqProcessAddr(t *testing.T) {
+func TestProcessAddr(t *testing.T) {
 	// Process a handshake. This should be an incoming peer.
 	// Send an addr and receive an addr.
 	// Ignore inv messages.
@@ -955,6 +936,34 @@ func TestqProcessAddr(t *testing.T) {
 	}
 }
 
+type MockSendQueue struct {
+	conn *MockConnection
+}
+
+func (msq *MockSendQueue) QueueMessage(msg wire.Message) error {
+	msq.conn.WriteMessage(msg)
+	return nil
+}
+
+func (msq *MockSendQueue) QueueDataRequest(inv []*wire.InvVect) error {
+	msq.conn.RequestData(inv)
+	return nil
+}
+
+func (msq *MockSendQueue) QueueInventory([]*wire.InvVect) error {
+	return nil
+}
+
+// Start ignores its input here because we need a MockConnection, which has some
+// extra functions that the regular Connection does not have. 
+func (msq *MockSendQueue) Start(conn bmpeer.Connection) {}
+
+func (msq *MockSendQueue) Running() bool {
+	return true
+}
+
+func (msq *MockSendQueue) Stop() {}
+
 var expires = time.Now().Add(10 * time.Minute)
 var expired = time.Now().Add(-10 * time.Minute).Add(-3 * time.Hour)
 
@@ -1044,7 +1053,7 @@ func randomShaHash() *wire.ShaHash {
 }
 
 // Test cases
-//  * after a successful handshake, get an inv and receive one. request an object
+//  * assume handshake already successful. Get an inv and receive one. request an object
 //    from the peer and receive a request for something that the mock peer has. Send
 //    and receive responses for the requests. Several cases of this scenario:
 //     * The peer already has everything that the mock peer has. (no inv expected.)
@@ -1053,8 +1062,7 @@ func randomShaHash() *wire.ShaHash {
 //  * error case: send an inv message that is too big. (peer should disconnect)
 //  * error case: send a request for an object that the peer does not have. (peer should not disconnect). 
 //  * error case: return an object that was not requested. (peer should disconnect)
-/*func TestProcessInvAndObjectExchange(t *testing.T) {
-	// Process a handshake.
+func TestProcessInvAndObjectExchange(t *testing.T) {
 	// Send an inv and receive an inv.
 	// Process a request for an object.
 	// Send a request and receive an object.
@@ -1099,7 +1107,10 @@ func randomShaHash() *wire.ShaHash {
 		{
 			[]wire.Message{}, 
 			[]wire.Message{},
-			&PeerAction{Messages: []wire.Message{TooLongInv}, DisconnectExpected: true, InteractionComplete: true}, 
+			&PeerAction{
+				Messages: []wire.Message{&wire.MsgVerAck{}, TooLongInv},
+				DisconnectExpected: true,
+				InteractionComplete: true}, 
 		},
 	}
 
@@ -1108,12 +1119,7 @@ func randomShaHash() *wire.ShaHash {
 	// A channel to make the fake incomming connection.
 	incoming := make(chan bmpeer.Connection)
 	
-	// Some parameters for the test sequence. 
-	streams := []uint32{1}
-	nonce, _ := wire.RandomUint64()
-	var addrin, addrout *wire.NetAddress = wire.NewNetAddressIPPort(net.IPv4(5, 45, 99, 75), 8444, 1, 0),
-		wire.NewNetAddressIPPort(net.IPv4(5, 45, 99, 75), 8444, 1, 0)
-	
+	// Some parameters for the test sequence. 	
 	localAddr := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 8333}
 	remoteAddr := &net.TCPAddr{IP: net.ParseIP("192.168.0.1"), Port: 8333}
 
@@ -1121,25 +1127,20 @@ func randomShaHash() *wire.ShaHash {
 		// Define the objects that will go in the database. 
 		// Create server and start it.
 		listeners := []string{net.JoinHostPort("", "8445")}
-		serv, err = TstNewServer(listeners, getMemDb([]wire.Message{}),
+		db := getMemDb([]wire.Message{})
+		serv, err := TstNewServer(listeners, db,
 			MockListen([]*MockListener{
 				NewMockListener(localAddr, incoming, make(chan struct{}))}))
 		if err != nil {
 			t.Fatal("Server failed to start.")
 		}
-		serv.TstStart([]DefaultPeer{})
-
-		// Test handshake.
-		incoming <- &mockBitmessageConn{
-			remoteAddr: tcpAddrYou,
-			localAddr:  tcpAddrMe,
-			
-			mockPeer: NewMockBitmessagePeer(report, serv, 
-				NewDataExchangePeerTester(
-					&PeerAction{messages : []wire.Message{wire.NewMsgVersion(addrin, addrout, nonce, streams)}}, 
-					test.mockDB, test.peerDB, test.invAction), 
-			),
-		}
+		serv.TstStart([]*DefaultPeer{})
+		
+		mockConn := NewMockConnection(localAddr, remoteAddr, report, 
+			NewDataExchangePeerTester(test.mockDB, test.peerDB, test.invAction))
+		mockSend := &MockSendQueue{mockConn}
+		inventory := bmpeer.NewInventory(db)
+		serv.handleAddPeerMsg(TstNewPeerHandshakeComplete(serv, mockConn, inventory, mockSend))
 		
 		go func() {
 			msg := <-report
@@ -1151,4 +1152,4 @@ func randomShaHash() *wire.ShaHash {
 	
 		serv.WaitForShutdown()
 	}
-}*/
+}

@@ -21,7 +21,7 @@ const (
 
 	// maxKnownInventory is the maximum number of items to keep in the known
 	// inventory cache.
-	//maxKnownInventory = 1000
+	maxKnownInventory = 1000
 
 	// negotiateTimeoutSeconds is the number of seconds of inactivity before
 	// we timeout a peer that hasn't completed the initial version
@@ -79,18 +79,12 @@ func (p *Peer) Start() error {
 		return nil
 	}
 
-	p.sendQueue.Start()
+	p.sendQueue.Start(p.conn)
 
 	// Send an initial version message if this is an outbound connection.
 	// TODO
 	/*if !p.inbound {
-		err := p.PushVersionMsg()
-		if err != nil {
-			p.logError("Can't send outbound version message %v", err)
-			p.Disconnect()
-			return err
-		}
-		p.versionSent = true
+		p.PushVersionMsg()
 	}*/
 
 	// Start processing input and output.
@@ -201,7 +195,7 @@ out:
 func NewPeer(logic Logic, conn Connection, db database.Db) *Peer {
 	return & Peer{
 		logic : logic, 
-		sendQueue : NewSendQueue(conn, db), 
+		sendQueue : NewSendQueue(NewInventory(db)), 
 		conn : conn, 
 	}
 }

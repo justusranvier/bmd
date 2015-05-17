@@ -105,14 +105,6 @@ func newNetAddress(addr net.Addr, stream uint32, services wire.ServiceFlag) (*wi
 	return na, nil
 }
 
-// outMsg is used to house a message to be sent along with a channel to signal
-// when the message has been sent (or won't be sent due to things such as
-// shutdown)
-type outMsg struct {
-	msg      wire.Message
-	doneChan chan struct{}
-}
-
 // peer provides a bitmessage peer for handling bitmessage communications. The
 // overall data flow is split into 3 goroutines and a separate object manager.
 // Inbound messages are read via the inHandler goroutine and generally
@@ -138,16 +130,13 @@ type peer struct {
 	disconnect        int32 // only to be used atomically
 	conn              bmpeer.Connection
 	sendQueue         bmpeer.SendQueue
+	inventory         *bmpeer.Inventory
 	addr              string
 	na                *wire.NetAddress
 	inbound           bool
 	persistent        bool
 	knownAddresses    map[string]struct{}
-	knownInventory    *MruInventoryMap
-	requestedObjects  map[wire.ShaHash]time.Time
-	knownInvMutex     sync.Mutex
 	retryCount        int64
-	continueHash      *wire.ShaHash
 	StatsMtx          sync.Mutex // protects all statistics below here.
 	versionKnown      bool
 	versionSent       bool
@@ -165,27 +154,6 @@ type peer struct {
 // string.
 func (p *peer) String() string {
 	return fmt.Sprintf("%s (inbound: %s)", p.addr, p.inbound)
-}
-
-// isKnownInventory returns whether or not the peer is known to have the passed
-// inventory. It is safe for concurrent access.
-func (p *peer) isKnownInventory(invVect *wire.InvVect) bool {
-	p.knownInvMutex.Lock()
-	defer p.knownInvMutex.Unlock()
-
-	if p.knownInventory.Exists(invVect) {
-		return true
-	}
-	return false
-}
-
-// AddKnownInventory adds the passed inventory to the cache of known inventory
-// for the peer. It is safe for concurrent access.
-func (p *peer) AddKnownInventory(invVect *wire.InvVect) {
-	p.knownInvMutex.Lock()
-	defer p.knownInvMutex.Unlock()
-
-	p.knownInventory.Add(invVect)
 }
 
 // VersionKnown returns the whether or not the version of a peer is known locally.
@@ -247,43 +215,27 @@ func max(x, y int) int {
 }
 
 func (p *peer) PushGetDataMsg(invVect []*wire.InvVect) {
-	newInvVect := make([]*wire.InvVect, max(len(invVect), wire.MaxInvPerMsg))
-	now := time.Now()
-	
-	var i int = 0
-	for _, inv := range invVect {
-		// If the object has already been requested, continue. 
-		if _, ok := p.requestedObjects[inv.Hash]; ok {
-			continue 
-		}
-	
-		// If the object is not in known inventory, continue. 
-		if !p.knownInventory.Exists(inv) {
-			continue 
-		}
-		
-		p.requestedObjects[inv.Hash] = now
-		newInvVect[i] = inv
-		i++
-		
-		if i == wire.MaxInvPerMsg {
-			p.QueueMessage(&wire.MsgGetData{newInvVect[:i]})
-			i = 0
-			newInvVect = make([]*wire.InvVect, max(len(invVect), wire.MaxInvPerMsg))
-		}
+	ivl := p.inventory.FilterRequested(invVect)
+
+	x := 0
+	for len(ivl) - x > wire.MaxInvPerMsg {
+		p.QueueMessage(&wire.MsgInv{ivl[x:x+wire.MaxInvPerMsg]})
+		x += wire.MaxInvPerMsg
 	}
 	
-	if i > 0 {
-		p.QueueMessage(&wire.MsgGetData{newInvVect[:i]})
-	}
+	p.QueueMessage(&wire.MsgInv{invVect})
 }
 
 func (p *peer) PushInvMsg(invVect []*wire.InvVect) {
-	if len(invVect) > wire.MaxInvPerMsg {
-		p.QueueMessage(&wire.MsgInv{invVect[:wire.MaxInvPerMsg]})
-	} else {
-		p.QueueMessage(&wire.MsgInv{invVect})
+	ivl := p.inventory.FilterKnown(invVect)
+
+	x := 0
+	for len(ivl) - x > wire.MaxInvPerMsg {
+		p.QueueMessage(&wire.MsgInv{ivl[x:x+wire.MaxInvPerMsg]})
+		x += wire.MaxInvPerMsg
 	}
+	
+	p.QueueMessage(&wire.MsgInv{invVect})
 }
 
 // pushObjectMsg sends an object message for the provided object hash to the
@@ -470,7 +422,7 @@ func (p *peer) handleInvMsg(msg *wire.MsgInv) {
 	
 	// Add inv to known inventory. 
 	for _, invVect := range msg.InvList {
-		p.AddKnownInventory(invVect)
+		p.inventory.AddKnownInventory(invVect)
 	}
 	
  	p.server.objectManager.QueueInv(msg, p)
@@ -521,13 +473,10 @@ func (p *peer) handleObjectMsg(msg wire.Message) {
 		return
 	}
 	
-	// Disconnect the peer if the object was not requested. 
-	if _, ok := p.requestedObjects[*hash]; !ok {
-		p.Disconnect()
-		return 
-	}
-	
-	delete(p.requestedObjects, *hash)
+	// TODO should we disconnect the peer if the object was not requested? 
+	// We don't remember everything that has been requested necessarily. 
+
+	p.inventory.DeleteRequest(&wire.InvVect{*hash})
 	
 	// Send the object to the object handler to be handled. 
 	p.server.objectManager.handleObjectMsg(msg)
@@ -710,8 +659,7 @@ func (p *peer) Start() error {
 		return nil
 	}
 
-	p.sendQueue = bmpeer.NewSendQueue(p.conn, p.server.db)
-	p.sendQueue.Start()
+	p.sendQueue.Start(p.conn)
 
 	// Send an initial version message if this is an outbound connection.
 	if !p.inbound {
@@ -746,14 +694,16 @@ func (p *peer) logError(fmt string, args ...interface{}) {
 // inbound flag. This is used by the newInboundPeer and newOutboundPeer
 // functions to perform base setup needed by both types of peers.
 func newPeerBase(s *server, inbound bool) *peer {
+	inventory := bmpeer.NewInventory(s.db)
 	p := peer{
 		server:          s,
 		protocolVersion: maxProtocolVersion,
 		bmnet:           wire.MainNet,
 		services:        wire.SFNodeNetwork,
 		inbound:         inbound,
-		knownAddresses:  make(map[string]struct{}),
-		knownInventory:  NewMruInventoryMap(maxKnownInventory),
+		inventory:       inventory, 
+		sendQueue:       bmpeer.NewSendQueue(inventory), 
+		knownAddresses:  make(map[string]struct{}), 
 	}
 	return &p
 }
