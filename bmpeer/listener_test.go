@@ -4,12 +4,12 @@
 
 package bmpeer_test
 
-import(
-	"net"
+import (
 	"errors"
+	"net"
 	"testing"
 	"time"
-	
+
 	"github.com/monetas/bmd/bmpeer"
 	"github.com/monetas/bmutil/wire"
 )
@@ -17,9 +17,9 @@ import(
 // mockListener implements the Listener interface and is used to mock
 // a listener to test the server and peers.
 type MockListener struct {
-	incoming   chan net.Conn
-	disconnect chan struct{}
-	localAddr  net.Addr
+	incoming     chan net.Conn
+	disconnect   chan struct{}
+	localAddr    net.Addr
 	disconnected bool
 }
 
@@ -51,51 +51,51 @@ func (ml *MockListener) Addr() net.Addr {
 
 // startNewMockListener is a function that can be swapped with the listen var for testing purposes.
 func startNewMockListener(localAddr net.Addr, incoming chan net.Conn, disconnect chan struct{}) func(service, addr string) (net.Listener, error) {
-	var stopped bool = false
+	stopped := false
 
 	return func(service, addr string) (net.Listener, error) {
 		if stopped {
 			return nil, errors.New("Failed.")
 		}
-		stopped = true // It only works once. 
+		stopped = true // It only works once.
 		return &MockListener{
-			incoming : incoming,
-			disconnect : disconnect, 
-			localAddr : localAddr, 
+			incoming:   incoming,
+			disconnect: disconnect,
+			localAddr:  localAddr,
 		}, nil
 	}
 }
 
 func TestConnectionAndListener(t *testing.T) {
 	remoteAddr := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 8333}
-	localAddr:= &net.TCPAddr{IP: net.ParseIP("192.168.0.1"), Port: 8333}
+	localAddr := &net.TCPAddr{IP: net.ParseIP("192.168.0.1"), Port: 8333}
 
 	incoming := make(chan net.Conn)
 
 	listener := bmpeer.TstNewListener(&MockListener{
-		incoming : incoming, 
-		disconnect : make(chan struct{}), 
-		localAddr : localAddr, 
+		incoming:   incoming,
+		disconnect: make(chan struct{}),
+		localAddr:  localAddr,
 	})
-	
+
 	if listener.Addr() != localAddr {
 		t.Errorf("Wrong local addr returned. Expected %s, got %s.", localAddr, listener.Addr())
 	}
-	
+
 	mockConn := NewMockConn(localAddr, remoteAddr)
-	
+
 	message1 := wire.NewMsgUnknownObject(617, time.Now(), wire.ObjectType(5), 12, 1, []byte{87, 99, 23, 56})
 	message2 := wire.NewMsgUnknownObject(616, time.Now(), wire.ObjectType(5), 12, 1, []byte{22, 55, 89, 107})
-	
+
 	testStep := make(chan struct{})
-	go func() {	
+	go func() {
 		mc, err := listener.Accept()
 		if err != nil {
 			t.Errorf("Unexpected error returned: %s", err)
 		}
-		
+
 		testStep <- struct{}{}
-		
+
 		mc2, err := listener.Accept()
 		if err == nil {
 			t.Errorf("Error expected.")
@@ -103,75 +103,75 @@ func TestConnectionAndListener(t *testing.T) {
 		if mc2 != nil {
 			t.Errorf("Connection somehow returned?")
 		}
-		
+
 		if mc.LocalAddr() != localAddr {
 			t.Errorf("Wrong local addr.")
 		}
-		
+
 		if mc.RemoteAddr() != remoteAddr {
 			t.Errorf("Wrong local addr.")
 		}
-		
+
 		msg, err := mc.ReadMessage()
 		if err != nil {
 			t.Errorf("Error returned reading message.")
 		}
-		
-		hashtest, _ := wire.MessageHash(msg)
-		hashexp, _ := wire.MessageHash(message1)
-		
+
+		hashtest := wire.MessageHash(msg)
+		hashexp := wire.MessageHash(message1)
+
 		if !hashexp.IsEqual(hashtest) {
 			t.Errorf("Wrong mock connection somehow returned?")
 		}
-		
+
 		mc.WriteMessage(message2)
-		
+
 		if mc.BytesWritten() != 50 {
 			t.Errorf("Wrong value for bytes written. Expected 50, got %d.", mc.BytesWritten())
 		}
-		
+
 		if mc.BytesRead() != 50 {
 			t.Errorf("Wrong value for bytes read. Expected 50, got %d.", mc.BytesRead())
 		}
-		
+
 		now := time.Now().Unix()
-		
-		if mc.LastWrite().Unix() >> 3 != now >> 3 {
+
+		if mc.LastWrite().Unix()>>3 != now>>3 {
 			t.Errorf("Wrong time: got %d expected %d", mc.LastWrite().Unix(), now)
 		}
-		
-		if mc.LastRead().Unix() >> 3 != now >> 3 {
+
+		if mc.LastRead().Unix()>>3 != now>>3 {
 			t.Errorf("Wrong time: got %d expected %d", mc.LastRead().Unix(), now)
 		}
-		
+
 		mc.Close()
-		
+
 		_, err = mc.ReadMessage()
 		if err == nil {
 			t.Errorf("Error expected because the connection should be closed.")
 		}
 
 		testStep <- struct{}{}
-		
-	} ()
-	
+
+	}()
+
 	// Send a mock connection to test Accept()
 	incoming <- mockConn
-	
+
 	<-testStep
-	
-	// Close the listener. 
+
+	// Close the listener.
 	listener.Close()
 
-	// Write a message to the connection. 
+	// Write a message to the connection.
 	mockConn.MockWrite(message1)
-	
-	// Write a message to the connection. 
+
+	// Write a message to the connection.
 	msg := mockConn.MockRead()
-		
-	hashtest, _ := wire.MessageHash(msg)
-	hashexp, _ := wire.MessageHash(message2)
-		
+
+	hashtest := wire.MessageHash(msg)
+	hashexp := wire.MessageHash(message2)
+
 	if !hashexp.IsEqual(hashtest) {
 		t.Errorf("Wrong message sent.")
 	}
@@ -180,12 +180,12 @@ func TestConnectionAndListener(t *testing.T) {
 }
 
 func TestListen(t *testing.T) {
-	localAddr:= &net.TCPAddr{IP: net.ParseIP("192.168.0.1"), Port: 8333}
+	localAddr := &net.TCPAddr{IP: net.ParseIP("192.168.0.1"), Port: 8333}
 
 	l := bmpeer.TstSwapListen(startNewMockListener(localAddr, make(chan net.Conn), make(chan struct{})))
 	defer bmpeer.TstSwapListen(l)
-	
-	listen, err := bmpeer.Listen("tcp4", "8445") 
+
+	listen, err := bmpeer.Listen("tcp4", "8445")
 	if listen == nil {
 		t.Errorf("No connection returned.")
 	}
@@ -193,7 +193,7 @@ func TestListen(t *testing.T) {
 		t.Errorf("Error %s returned.", err)
 	}
 
-	listen, err = bmpeer.Listen("tcp4", "8445") 
+	listen, err = bmpeer.Listen("tcp4", "8445")
 	if listen != nil {
 		t.Errorf("Connection returned when it should have failed.")
 	}

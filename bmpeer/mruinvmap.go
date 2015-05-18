@@ -84,19 +84,19 @@ func (m *MruInventoryMap) Delete(iv *wire.InvVect) {
 }
 
 // Filter takes a slice of values and adds those to the map that don't already exist.
-// It returns a slice containing only the values that were added. 
+// It returns a slice containing only the values that were added.
 func (m *MruInventoryMap) Filter(invs []*wire.InvVect) []*wire.InvVect {
 	filtered := make([]*wire.InvVect, len(invs))
-	
+
 	i := 0
 	for _, inv := range invs {
 		if !m.Exists(inv) {
 			m.Add(inv)
 			filtered[i] = inv
-			i ++ 
+			i++
 		}
 	}
-	
+
 	return filtered[:i]
 }
 

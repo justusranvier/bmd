@@ -8,59 +8,59 @@ import (
 )
 
 func TestNew(t *testing.T) {
-	if bmpeer.NewMruInventoryMap(2) == nil{
+	if bmpeer.NewMruInventoryMap(2) == nil {
 		t.Error("Should have returned an inv map.")
 	}
 }
 
 func TestString(t *testing.T) {
-	hasha, _ := wire.NewShaHash([]byte{0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1})
-	hashb, _ := wire.NewShaHash([]byte{0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,200})
-	a := &wire.InvVect{*hasha}
-	b := &wire.InvVect{*hashb}
+	hasha, _ := wire.NewShaHash([]byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1})
+	hashb, _ := wire.NewShaHash([]byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 200})
+	a := &wire.InvVect{Hash: *hasha}
+	b := &wire.InvVect{Hash: *hashb}
 
 	m := bmpeer.NewMruInventoryMap(2)
 	m.Add(a)
 	m.Add(b)
-	
-	// No good way to actually test that the string comes out right. 
+
+	// No good way to actually test that the string comes out right.
 	str := m.String()
 	//t.Error("String expected:",str)
-	
+
 	if str[:74] != "<2>map[{0000000000000000000000000000000000000000000000000000000000000001}:" &&
-	  str[87:154] != "{00000000000000000000000000000000000000000000000000000000000000c8}:" {
+		str[87:154] != "{00000000000000000000000000000000000000000000000000000000000000c8}:" {
 		t.Error("Incorrect string returned.")
 	}
 }
 
-
+// TestMruInvMap tests Exists, Add, and Delete.
 func TestMruInvMap(t *testing.T) {
-	a := &wire.InvVect{*randomShaHash()}
-	b := &wire.InvVect{*randomShaHash()}
-	c := &wire.InvVect{*randomShaHash()}
+	a := &wire.InvVect{Hash: *randomShaHash()}
+	b := &wire.InvVect{Hash: *randomShaHash()}
+	c := &wire.InvVect{Hash: *randomShaHash()}
 
 	m := bmpeer.NewMruInventoryMap(2)
-	
+
 	if m.Exists(a) {
 		t.Error("Map should be empty.")
 	}
-	
+
 	m.Add(a)
 	if !m.Exists(a) {
 		t.Error("Map should not be empty..")
 	}
 	m.Add(b)
 	m.Add(c)
-	
-	// Now the map should be missing a and have both b and c. 
+
+	// Now the map should be missing a and have both b and c.
 	if m.Exists(a) {
 		t.Error("Element should have been knocked out.")
 	}
-	
+
 	if !m.Exists(b) {
 		t.Error("Element should be present.")
 	}
-	
+
 	m.Delete(b)
 	if m.Exists(b) {
 		t.Error("Element was deleted and should not be present.")
@@ -71,40 +71,41 @@ func TestMruInvMap(t *testing.T) {
 	}
 }
 
-// TestAdd0 tests the case in which an entry is added to a map of size 0.
+// TestAdd0 tests an mruinvmap of size zero.
 func TestAdd0(t *testing.T) {
-	a := &wire.InvVect{*randomShaHash()}
-	//b := &wire.InvVect{*randomShaHash()}
-	//c := &wire.InvVect{*randomShaHash()}
+	a := &wire.InvVect{Hash: *randomShaHash()}
 
 	m := bmpeer.NewMruInventoryMap(0)
 	if m.Exists(a) {
 		t.Error("Map should be empty.")
 	}
-	
+
 	m.Add(a)
-	if m	.Exists(a) {
+	if m.Exists(a) {
 		t.Error("Map should still be empty.")
 	}
 }
 
 func TestFilter(t *testing.T) {
-	a := &wire.InvVect{*randomShaHash()}
-	b := &wire.InvVect{*randomShaHash()}
-	c := &wire.InvVect{*randomShaHash()}
-	
+	a := &wire.InvVect{Hash: *randomShaHash()}
+	b := &wire.InvVect{Hash: *randomShaHash()}
+	c := &wire.InvVect{Hash: *randomShaHash()}
+
 	m := bmpeer.NewMruInventoryMap(3)
 	m.Add(a)
-	
+
 	ret := m.Filter([]*wire.InvVect{a, b, c})
-	
+
 	if len(ret) != 2 {
 		t.Errorf("Filtered list has the wrong size. Got %d expected %d.", len(ret), 2)
 	}
 	if ret[0] != b {
 		t.Error("Wrong filtered list returned.")
 	}
-	
+
+	if !m.Exists(a) {
+		t.Error("Element should be present.")
+	}
 	if !m.Exists(b) {
 		t.Error("Element should be present.")
 	}

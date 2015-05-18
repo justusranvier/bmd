@@ -8,13 +8,15 @@ import (
 	"net"
 	"sync"
 	"time"
-	
+
 	"github.com/monetas/bmutil/wire"
 )
 
-// Connection
-// This is written as an interface so that it can easily be swapped out for a 
-// mock object for testing purposes. 
+// Connection is a bitmessage connection that abstracts the underlying tcp
+// connection away. The user of the Connection only uses bitmessage
+// wire.Message objects instead of the underlying byte stream.
+// This is written as an interface so that it can easily be swapped out for a
+// mock object for testing purposes.
 type Connection interface {
 	WriteMessage(wire.Message) error
 	ReadMessage() (wire.Message, error)
@@ -28,8 +30,8 @@ type Connection interface {
 }
 
 // TODO handle timeout and ping/pong issues.
-// connection implements the Connection interface and connects to a 
-// real outside bitmessage node over the internet. 
+// connection implements the Connection interface and connects to a
+// real outside bitmessage node over the internet.
 type connection struct {
 	conn          net.Conn
 	mtx           sync.Mutex
@@ -42,7 +44,7 @@ type connection struct {
 func (pc *connection) WriteMessage(msg wire.Message) error {
 	// Write the message to the peer.
 	n, err := wire.WriteMessageN(pc.conn, msg, wire.MainNet)
-	
+
 	pc.mtx.Lock()
 	pc.bytesSent += uint64(n)
 	pc.lastWrite = time.Now()
@@ -108,17 +110,17 @@ func (pc *connection) Close() error {
 	return pc.conn.Close()
 }
 
-var dial func(service, addr string) (net.Conn, error) = net.Dial
+var dial = net.Dial
 
-// dialNewConnection creates a new peerConnection and
-// dials out to the given address. 
+// Dial creates a new peerConnection and
+// dials out to the given address.
 func Dial(service, addr string) (Connection, error) {
 	conn, err := dial(service, addr)
 	if err != nil {
 		return nil, err
 	}
-	
-	return &connection {
-		conn : conn, 
+
+	return &connection{
+		conn: conn,
 	}, nil
 }

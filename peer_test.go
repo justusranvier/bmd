@@ -260,9 +260,14 @@ func (peer *DataExchangePeerTester) OnMsgInv(inv *wire.MsgInv) *PeerAction {
 			duplicate[*iv] = struct{}{}
 			newInvList[i] = iv
 			peer.requested[*iv] = struct{}{}
+			i++
 		}
 	}
-		
+
+	if i == 0 {
+		return nil
+	}
+
 	return &PeerAction {
 		Messages : []wire.Message{&wire.MsgGetData{newInvList[:i]}},
 	}
@@ -293,15 +298,16 @@ func (peer *DataExchangePeerTester) OnMsgGetData(getData *wire.MsgGetData) *Peer
 			duplicate[*iv] = struct{}{}
 			messages[i] = msg
 			peer.peerInventory[*iv] = struct{}{}
+			i ++ 
 		}
 	}
 
 	peer.dataSent = true
 
 	if peer.dataReceived {
-		return &PeerAction{messages, nil, true, false}
+		return &PeerAction{messages[:i], nil, true, false}
 	} else {
-		return &PeerAction{messages, nil, false, false}
+		return &PeerAction{messages[:i], nil, false, false}
 	}
 }
 
@@ -334,38 +340,72 @@ func NewDataExchangePeerTester(inventory []wire.Message, peerInventory []wire.Me
 	in := make(map[wire.InvVect]wire.Message)
 	pin := make(map[wire.InvVect]struct{})
 	invMsg := wire.NewMsgInv()
+
+	// Construct the real peer's inventory. 
 	for _, message := range inventory {
-		hash, _ := wire.MessageHash(message)
-		inv := wire.InvVect{*hash}
+		inv := wire.InvVect{*wire.MessageHash(message)}
 		invMsg.AddInvVect(&inv)
 		in[inv] = message
 	}
+
+	// Construct the mock peer's inventory. 
 	for _, message := range peerInventory {
-		hash, _ := wire.MessageHash(message)
-		inv := wire.InvVect{*hash}
+		inv := wire.InvVect{*wire.MessageHash(message)}
 		pin[inv] = struct{}{}
+	}
+	
+	dataSent := true
+	dataReceived := true
+	
+	// Does the real peer have any inventory that the mock peer does not have?
+	for inv, _ := range in {
+		if _, ok := pin[inv]; !ok {
+			dataSent = false
+			break
+		}
+	}
+	
+	// Does the mock peer have any inventory that the real peer does not? 
+	for inv, _ := range pin {
+		if _, ok := in[inv]; !ok {
+			dataReceived = false
+			break
+		}
 	}
 	
 	var inva *PeerAction
 	if invAction == nil {
-		inva = &PeerAction{
-			Messages : []wire.Message{&wire.MsgVerAck{}, invMsg},
+		if len(invMsg.InvList) == 0 {
+			inva = &PeerAction{
+				Messages : []wire.Message{&wire.MsgVerAck{}},
+				InteractionComplete : dataSent && dataReceived, 
+			}
+		} else {
+			inva = &PeerAction{
+				Messages : []wire.Message{&wire.MsgVerAck{}, invMsg},
+				InteractionComplete : dataSent && dataReceived, 
+			}
 		}
 	} else {
 		inva = invAction
 	}
 	
 	return &DataExchangePeerTester{
+		dataSent : dataSent,
+		dataReceived : dataReceived, 
 		inventory : in, 
 		peerInventory : pin, 
-		invAction : inva, 
+		invAction : inva,
+		requested : make(map[wire.InvVect]struct{}), 
 	}
 }
 
 // The report that the MockConnection sends when its interaction is complete. 
 // If the error is nil, then the test has completed successfully. 
+// The report also includes any object messages that were sent to the peer.
 type TestReport struct {
-	Err error
+	Err error 
+	DataSent []*wire.ShaHash
 }
 
 // MockConnection implements the Connection interface and 
@@ -381,6 +421,9 @@ type MockConnection struct {
 	// This is the part that is customized for each test. 
 	//handle     func(wire.Message) *PeerAction
 	peerTest PeerTest
+	
+	// A list of hashes of objects that have been sent to the real peer.
+	objectData []*wire.ShaHash
 	
 	// A queue of messages to be received by the real peer.
 	msgQueue   []wire.Message  
@@ -420,14 +463,19 @@ func (mock *MockConnection) ReadMessage() (wire.Message, error) {
 	if mock.queuePlace >= len(mock.msgQueue) {
 		mock.msgQueue = nil
 	}
+	
+	switch t := toSend.(type) {
+	case *wire.MsgGetPubKey, *wire.MsgPubKey, *wire.MsgMsg, *wire.MsgBroadcast, *wire.MsgUnknownObject:
+		mock.objectData = append(mock.objectData, wire.MessageHash(t))
+	}
 
 	return toSend, nil
 }
 
 // WriteMessage figures out how to respond to a message once it is decyphered.
 func (mock *MockConnection) WriteMessage(rmsg wire.Message) error {
-	// We can keep receiving messages after the interaction is done; we just ignore them.	
-	// We are waiting to see whether the peer disconnects.
+	// We can keep receiving messages after the interaction is done; we just
+	// ignore them.	 We are waiting to see whether the peer disconnects.
 	if mock.interactionComplete {
 		return nil
 	}
@@ -533,7 +581,7 @@ func (mock *MockConnection) ConnectionClosed() {
 func (mock *MockConnection) Done(err error) {
 	mock.timer.Stop()
 	mock.interactionComplete = true
-	mock.report <- TestReport{err}
+	mock.report <- TestReport{err, mock.objectData}
 }
 
 // Start loads the mock peer's initial action if there is one.
@@ -567,6 +615,7 @@ func NewMockConnection(localAddr, remoteAddr net.Addr, report chan TestReport, p
 		interactionComplete : false,
 		disconnectExpected: false, 
 		reply : make(chan []wire.Message),
+		objectData : make([]*wire.ShaHash, 0), 
 	}
 	
 	mock.timer = time.AfterFunc(time.Millisecond * 100, func() {
@@ -653,8 +702,7 @@ func getMemDb(msgs []wire.Message) database.Db {
 	}
 	
 	for _, msg := range msgs {
-		data, _ := wire.EncodeMessage(msg)
-		db.InsertObject(data)
+		db.InsertObject(wire.EncodeMessage(msg))
 	}
 	
 	return db
@@ -938,15 +986,18 @@ func TestProcessAddr(t *testing.T) {
 
 type MockSendQueue struct {
 	conn *MockConnection
+	msgQueue      chan wire.Message
+	requestQueue  chan []*wire.InvVect
+	quit          chan struct{}
 }
 
 func (msq *MockSendQueue) QueueMessage(msg wire.Message) error {
-	msq.conn.WriteMessage(msg)
+	msq.msgQueue <- msg
 	return nil
 }
 
 func (msq *MockSendQueue) QueueDataRequest(inv []*wire.InvVect) error {
-	msq.conn.RequestData(inv)
+	msq.requestQueue <- inv
 	return nil
 }
 
@@ -956,13 +1007,41 @@ func (msq *MockSendQueue) QueueInventory([]*wire.InvVect) error {
 
 // Start ignores its input here because we need a MockConnection, which has some
 // extra functions that the regular Connection does not have. 
-func (msq *MockSendQueue) Start(conn bmpeer.Connection) {}
+func (msq *MockSendQueue) Start(conn bmpeer.Connection) {
+	go msq.handler()
+}
 
 func (msq *MockSendQueue) Running() bool {
 	return true
 }
 
-func (msq *MockSendQueue) Stop() {}
+func (msq *MockSendQueue) Stop() {
+	close(msq.quit)
+}
+
+// Must be run as a go routine.
+func (msq *MockSendQueue) handler() {
+out:
+	for {
+		select {
+		case <-msq.quit:
+			break out
+		case inv := <- msq.requestQueue:
+			msq.conn.RequestData(inv)
+		case msg := <- msq.msgQueue:
+			msq.conn.WriteMessage(msg)
+		}
+	}
+}
+
+func NewMockSendQueue(mockConn *MockConnection) *MockSendQueue {
+	return &MockSendQueue{
+		conn : mockConn, 
+		msgQueue:      make(chan wire.Message, 1),  
+		requestQueue:  make(chan []*wire.InvVect, 1), 
+		quit:          make(chan struct{}), 
+	}
+}
 
 var expires = time.Now().Add(10 * time.Minute)
 var expired = time.Now().Add(-10 * time.Minute).Add(-3 * time.Hour)
@@ -1079,29 +1158,44 @@ func TestProcessInvAndObjectExchange(t *testing.T) {
 		mockDB []wire.Message // The messages that are already in the 
 		invAction *PeerAction // Action for the mock peer to take upon receiving an inv.
 	} {
-		{
+		{ // Nobody has any inv in this test case! 
+			[]wire.Message{},
+			[]wire.Message{},
+			&PeerAction{
+				Messages: []wire.Message{&wire.MsgVerAck{}},
+				InteractionComplete: true}, 
+		},
+		{ // Send empty inv and should be disconnected.
+			[]wire.Message{},
+			[]wire.Message{},
+			&PeerAction{
+				Messages: []wire.Message{&wire.MsgVerAck{}, wire.NewMsgInv()},
+				InteractionComplete: true, 
+				DisconnectExpected: true}, 
+		},
+		{ // Only the real peer should request data. 
 			[]wire.Message{},
 			[]wire.Message{testObj[0], testObj[2], testObj[4], testObj[6], testObj[8]},
 			nil, 
 		},
-		{
+		{ // Neither peer should request data. 
 			[]wire.Message{testObj[0], testObj[2], testObj[4], testObj[6], testObj[8]},
 			[]wire.Message{testObj[0], testObj[2], testObj[4], testObj[6], testObj[8]},
 			nil, 
 		},
-		{
+		{ // Only the mock peer should request data. 
+			[]wire.Message{testObj[0], testObj[2], testObj[4], testObj[6], testObj[8]},
+			[]wire.Message{},
+			nil, 
+		},
+		{ // The peers have no data in common, so they should both ask for everything of the other. 
 			[]wire.Message{testObj[1], testObj[3], testObj[5], testObj[7], testObj[9]},
 			[]wire.Message{testObj[0], testObj[2], testObj[4], testObj[6], testObj[8]},
 			nil, 
 		},
-		{
+		{ // The peers have some data in common. 
 			[]wire.Message{testObj[0], testObj[3], testObj[5], testObj[7], testObj[9]},
 			[]wire.Message{testObj[0], testObj[2], testObj[4], testObj[6], testObj[8]},
-			nil, 
-		},
-		{
-			[]wire.Message{testObj[0], testObj[2], testObj[4], testObj[6], testObj[8]},
-			[]wire.Message{},
 			nil, 
 		},
 		{
@@ -1127,7 +1221,7 @@ func TestProcessInvAndObjectExchange(t *testing.T) {
 		// Define the objects that will go in the database. 
 		// Create server and start it.
 		listeners := []string{net.JoinHostPort("", "8445")}
-		db := getMemDb([]wire.Message{})
+		db := getMemDb(test.peerDB)
 		serv, err := TstNewServer(listeners, db,
 			MockListen([]*MockListener{
 				NewMockListener(localAddr, incoming, make(chan struct{}))}))
@@ -1138,18 +1232,27 @@ func TestProcessInvAndObjectExchange(t *testing.T) {
 		
 		mockConn := NewMockConnection(localAddr, remoteAddr, report, 
 			NewDataExchangePeerTester(test.mockDB, test.peerDB, test.invAction))
-		mockSend := &MockSendQueue{mockConn}
+		mockSend := NewMockSendQueue(mockConn)
 		inventory := bmpeer.NewInventory(db)
 		serv.handleAddPeerMsg(TstNewPeerHandshakeComplete(serv, mockConn, inventory, mockSend))
 		
+		var msg TestReport
 		go func() {
-			msg := <-report
+			msg = <-report
 			if msg.Err != nil {
 				t.Error(fmt.Sprintf("error case %d: %s", test_case, msg))
-			}
+			} 
 			serv.Stop()
 		}()
 	
 		serv.WaitForShutdown()
+		// Check if the data sent is actually in the peer's database. 
+		if msg.DataSent != nil {
+			for _, hash := range msg.DataSent {
+				if ok, _ := db.ExistsObject(hash); !ok {
+					t.Error("Object",*hash,"not found in database.")
+				}
+			}
+		}
 	}
 }

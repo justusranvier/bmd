@@ -216,6 +216,10 @@ func max(x, y int) int {
 
 func (p *peer) PushGetDataMsg(invVect []*wire.InvVect) {
 	ivl := p.inventory.FilterRequested(invVect)
+	
+	if len(ivl) == 0 {
+		return
+	}
 
 	x := 0
 	for len(ivl) - x > wire.MaxInvPerMsg {
@@ -223,7 +227,7 @@ func (p *peer) PushGetDataMsg(invVect []*wire.InvVect) {
 		x += wire.MaxInvPerMsg
 	}
 	
-	p.QueueMessage(&wire.MsgInv{invVect})
+	p.QueueMessage(&wire.MsgGetData{ivl[x:]})
 }
 
 func (p *peer) PushInvMsg(invVect []*wire.InvVect) {
@@ -235,7 +239,9 @@ func (p *peer) PushInvMsg(invVect []*wire.InvVect) {
 		x += wire.MaxInvPerMsg
 	}
 	
-	p.QueueMessage(&wire.MsgInv{invVect})
+	if len(ivl) > 0 {
+		p.QueueMessage(&wire.MsgInv{ivl[x:]})
+	}
 }
 
 // pushObjectMsg sends an object message for the provided object hash to the
@@ -416,7 +422,7 @@ func (p *peer) handleVerAckMsg() {
 // QueueMessage with any appropriate responses.
 func (p *peer) handleInvMsg(msg *wire.MsgInv) {
 	// Disconnect if the message is too big. 
-	if len(msg.InvList) > wire.MaxInvPerMsg {
+	if len(msg.InvList) > wire.MaxInvPerMsg || len(msg.InvList) == 0 {
 		p.Disconnect()
 	}
 	
@@ -468,15 +474,11 @@ func (p *peer) handleInitialConnection() {
 
 // 
 func (p *peer) handleObjectMsg(msg wire.Message) {
-	hash, err := wire.MessageHash(msg)
-	if err != nil {
-		return
-	}
 	
 	// TODO should we disconnect the peer if the object was not requested? 
 	// We don't remember everything that has been requested necessarily. 
 
-	p.inventory.DeleteRequest(&wire.InvVect{*hash})
+	p.inventory.DeleteRequest(&wire.InvVect{*wire.MessageHash(msg)})
 	
 	// Send the object to the object handler to be handled. 
 	p.server.objectManager.handleObjectMsg(msg)
@@ -572,26 +574,11 @@ out:
 				markConnected = true
 	
 			case *wire.MsgGetData:
-				p.handleGetDataMsg(msg)
-				markConnected = true
-			
-			case *wire.MsgGetPubKey:
-				p.handleObjectMsg(msg)
+				getData := rmsg.(*wire.MsgGetData)
+				p.sendQueue.QueueDataRequest(getData.InvList)
 				markConnected = true
 
-			case *wire.MsgPubKey:
-				p.handleObjectMsg(msg)
-				markConnected = true
-
-			case *wire.MsgMsg:
-				p.handleObjectMsg(msg)
-				markConnected = true
-				
-			case *wire.MsgBroadcast:
-				p.handleObjectMsg(msg)
-				markConnected = true
-				
-			case *wire.MsgUnknownObject:
+			case *wire.MsgGetPubKey, *wire.MsgPubKey, *wire.MsgMsg, *wire.MsgBroadcast, *wire.MsgUnknownObject:
 				p.handleObjectMsg(msg)
 				markConnected = true
 			}

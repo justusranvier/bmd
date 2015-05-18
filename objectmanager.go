@@ -122,19 +122,10 @@ func (om *objectManager) handleDonePeerMsg(peers *list.List, p *peer) {
 }
 
 // handleObjectMsg handles transaction messages from all peers.
-func (om *objectManager) handleObjectMsg(obj wire.Message) {
-	hash, err := wire.MessageHash(obj)
-	if err != nil {
-		return
-	}
+func (om *objectManager) handleObjectMsg(obj wire.Message) {	
+	delete(om.requestedObjects, *wire.MessageHash(obj))
 	
-	delete(om.requestedObjects, *hash)
-	
-	encoded, err := wire.EncodeMessage(obj)
-	if err != nil {
-		return 
-	}
-	om.server.db.InsertObject(encoded)
+	om.server.db.InsertObject(wire.EncodeMessage(obj))
 }
 
 // haveInventory returns whether or not the inventory represented by the passed
@@ -149,7 +140,7 @@ func (om *objectManager) haveInventory(invVect *wire.InvVect) (bool, error) {
 // handleInvMsg handles inv messages from all peers.
 // We examine the inventory advertised by the remote peer and act accordingly.
 func (om *objectManager) handleInvMsg(imsg *invMsg) {
-	/*requestQueue := make([]*wire.InvVect, len(imsg.inv.InvList))
+	requestQueue := make([]*wire.InvVect, len(imsg.inv.InvList))
 
 	// Request the advertised inventory if we don't already have it.  
 	var i int = 0
@@ -167,8 +158,15 @@ func (om *objectManager) handleInvMsg(imsg *invMsg) {
 			om.requestedObjects[iv.Hash] = imsg.peer
 		}
 	}
+	
+	if i == 0 {
+		return
+	}
 
-	imsg.peer.PushGetDataMsg(requestQueue)*/
+	// TODO This hack sends the getData message to ALL peers, which is completely dumb.
+	om.server.state.forAllPeers(func (p *peer) {
+		p.PushGetDataMsg(requestQueue[:i])
+	})
 }
 
 // objectHandler is the main handler for the object manager.  It must be run

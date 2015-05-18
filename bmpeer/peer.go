@@ -1,11 +1,11 @@
 package bmpeer
 
 import (
-	"time"
 	"sync/atomic"
-	
-	"github.com/monetas/bmutil/wire"
+	"time"
+
 	"github.com/monetas/bmd/database"
+	"github.com/monetas/bmutil/wire"
 )
 
 const (
@@ -38,16 +38,19 @@ const (
 	//pingTimeoutMinutes = 2
 )
 
+// Peer is the part of a bitmessage peer that handles the incoming connection
+// and manages all other components. This is not yet completed and has not
+// been incorporated into the peer that is in use right now.
 type Peer struct {
-	logic       Logic
-	sendQueue   SendQueue
-	conn        Connection
+	logic     Logic
+	sendQueue SendQueue
+	conn      Connection
 
-	started     int32
-	connected   int32
-	disconnect  int32 // only to be used atomically
+	started    int32
+	connected  int32
+	disconnect int32 // only to be used atomically
 
-	quit        chan struct{}
+	quit chan struct{}
 }
 
 // Connected returns whether or not the peer is currently connected.
@@ -63,8 +66,9 @@ func (p *Peer) Disconnect() {
 	if atomic.AddInt32(&p.disconnect, 1) != 1 {
 		return
 	}
-	
+
 	p.sendQueue.Stop()
+	close(p.quit)
 
 	if atomic.LoadInt32(&p.connected) != 0 {
 		p.conn.Close()
@@ -130,48 +134,32 @@ out:
 		case *wire.MsgInv:
 			err = p.logic.HandleInvMsg(msg)
 			markConnected = true
-	
+
 		case *wire.MsgGetData:
 			err = p.sendQueue.QueueDataRequest((rmsg.(*wire.MsgGetData)).InvList)
 			markConnected = true
-			
-		case *wire.MsgGetPubKey:
-			err = p.logic.HandleObjectMsg(msg)
-			markConnected = true
 
-		case *wire.MsgPubKey:
-			err = p.logic.HandleObjectMsg(msg)
-			markConnected = true
-
-		case *wire.MsgMsg:
-			err = p.logic.HandleObjectMsg(msg)
-			markConnected = true
-				
-		case *wire.MsgBroadcast:
-			err = p.logic.HandleObjectMsg(msg)
-			markConnected = true
-				
-		case *wire.MsgUnknownObject:
-			err = p.logic.HandleObjectMsg(msg)
+		case *wire.MsgGetPubKey, *wire.MsgPubKey, *wire.MsgMsg, *wire.MsgBroadcast, *wire.MsgUnknownObject:
+			err = p.logic.HandleObjectMsg(rmsg)
 			markConnected = true
 		}
-		
+
 		if err != nil {
 			break out
 		}
-			
+
 		// reset the timer.
 		idleTimer.Reset(idleTimeoutMinutes * time.Minute)
 
 		// TODO
 		// Mark the address as currently connected and working as of
 		// now if one of the messages that trigger it was processed.
-//		if markConnected && atomic.LoadInt32(&p.disconnect) == 0 {
-//			if p.na == nil {
-//				continue
-//			}
-//			p.server.addrManager.Connected(p.na)
-//		}
+		//		if markConnected && atomic.LoadInt32(&p.disconnect) == 0 {
+		//			if p.na == nil {
+		//				continue
+		//			}
+		//			p.server.addrManager.Connected(p.na)
+		//		}
 		// ok we got a message, reset the timer.
 		// timer just calls p.Disconnect() after logging.
 		idleTimer.Reset(idleTimeoutMinutes * time.Minute)
@@ -188,14 +176,15 @@ out:
 	//if p.HandshakeComplete() {
 	//	p.server.objectManager.DonePeer(p)
 	//}
-	
+
 	//p.server.donePeers <- p
 }
 
+// NewPeer returns a new Peer object.
 func NewPeer(logic Logic, conn Connection, db database.Db) *Peer {
-	return & Peer{
-		logic : logic, 
-		sendQueue : NewSendQueue(NewInventory(db)), 
-		conn : conn, 
+	return &Peer{
+		logic:     logic,
+		sendQueue: NewSendQueue(NewInventory(db)),
+		conn:      conn,
 	}
 }
