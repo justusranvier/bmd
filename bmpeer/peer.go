@@ -69,6 +69,7 @@ func (p *Peer) Disconnect() {
 
 	p.sendQueue.Stop()
 	close(p.quit)
+	// TODO remove peer from object manager
 
 	if atomic.LoadInt32(&p.connected) != 0 {
 		p.conn.Close()
@@ -147,7 +148,9 @@ out:
 		if err != nil {
 			break out
 		}
+		if markConnected == true { // XXX to make it compile
 
+		}
 		// reset the timer.
 		idleTimer.Reset(idleTimeoutMinutes * time.Minute)
 

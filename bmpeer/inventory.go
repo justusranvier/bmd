@@ -8,19 +8,20 @@ import (
 )
 
 // Inventory is the part of a peer that manages object hashes and remembers
-// which are known to the peer and which have been requested from it.
+// which are known to the peer and which have been requested from it. It is safe
+// for concurrent access.
 type Inventory struct {
 	db        database.Db
 	known     *MruInventoryMap
 	requested *MruInventoryMap
-	mutex     sync.Mutex
+	mutex     sync.RWMutex
 }
 
-// IsKnownInventory returns whether or not the peer is known to have the passed
-// inventory. It is safe for concurrent access.
-func (I *Inventory) IsKnownInventory(invVect *wire.InvVect) bool {
-	I.mutex.Lock()
-	defer I.mutex.Unlock()
+// IsKnown returns whether or not the peer is known to have the passed
+// inventory.
+func (I *Inventory) IsKnown(invVect *wire.InvVect) bool {
+	I.mutex.RLock()
+	defer I.mutex.RUnlock()
 
 	if I.known.Exists(invVect) {
 		return true
@@ -28,9 +29,9 @@ func (I *Inventory) IsKnownInventory(invVect *wire.InvVect) bool {
 	return false
 }
 
-// AddKnownInventory adds the passed inventory to the cache of known inventory
-// for the peer. It is safe for concurrent access.
-func (I *Inventory) AddKnownInventory(invVect *wire.InvVect) {
+// AddKnown adds the passed inventory to the cache of known inventory for the
+// peer.
+func (I *Inventory) AddKnown(invVect *wire.InvVect) {
 	I.mutex.Lock()
 	defer I.mutex.Unlock()
 
@@ -58,36 +59,9 @@ func (I *Inventory) DeleteRequest(invVect *wire.InvVect) (ok bool) {
 	return false
 }
 
-// RetrieveObject retrieves an object from the database and decodes it.
-// TODO we actually end up decoding the message and then encoding it again when
-// it is sent. That is not necessary.
-func (I *Inventory) RetrieveObject(inv *wire.InvVect) wire.Message {
-	obj, err := I.db.FetchObjectByHash(&inv.Hash)
-	if err != nil {
-		return nil
-	}
-
-	msg, err := wire.DecodeMsgObject(obj)
-	if err != nil {
-		return nil
-	}
-
-	return msg
-}
-
-// RetrieveData retrieves an object from the database and returns it as a stream
-func (I *Inventory) RetrieveData(inv *wire.InvVect) []byte {
-	obj, err := I.db.FetchObjectByHash(&inv.Hash)
-	if err != nil {
-		return nil
-	}
-
-	return obj
-}
-
 // FilterKnown takes a list of InvVects, adds them to the list of known
 // inventory, and returns those which were not already in the list. It is used
-// to insure that data is not sent to the peer that it already is known to have.
+// to ensure that data is not sent to the peer that it already is known to have.
 func (I *Inventory) FilterKnown(inv []*wire.InvVect) []*wire.InvVect {
 	I.mutex.Lock()
 	defer I.mutex.Unlock()
@@ -97,7 +71,7 @@ func (I *Inventory) FilterKnown(inv []*wire.InvVect) []*wire.InvVect {
 
 // FilterRequested takes a list of InvVects, adds them to the list of requested
 // data, and returns those which were not already in the list. It is used to
-// insure that data is not requested twice.
+// ensure that data is not requested twice.
 func (I *Inventory) FilterRequested(inv []*wire.InvVect) []*wire.InvVect {
 	I.mutex.Lock()
 	defer I.mutex.Unlock()
