@@ -12,18 +12,11 @@ import (
 	"net"
 	"os"
 	"runtime"
-
-	"github.com/monetas/bmd/database"
-	"github.com/monetas/bmd/database/memdb"
 )
 
 var (
 	shutdownChannel = make(chan struct{})
 )
-
-// winServiceMain is only invoked on Windows. It detects when bmd is running
-// as a service and reacts accordingly.
-var winServiceMain func() (bool, error)
 
 // bmdMain is the real main function for bmd. It is necessary to work around
 // the fact that deferred functions do not run when os.Exit() is called. The
@@ -31,9 +24,7 @@ func bmdMain() error {
 	listeners := make([]string, 1)
 	listeners[0] = net.JoinHostPort("", "8445")
 
-	database.AddDBDriver(database.DriverDB{DbType: "memdb", CreateDB: memdb.CreateDB, OpenDB: memdb.OpenDB})
-
-	db, err := database.CreateDB("memdb")
+	db, err := setupDB("memdb", "")
 	if err != nil {
 		return err
 	}
@@ -65,19 +56,6 @@ func bmdMain() error {
 func main() {
 	// Use all processor cores.
 	runtime.GOMAXPROCS(runtime.NumCPU())
-
-	// Call serviceMain on Windows to handle running as a service. When
-	// the return isService flag is true, exit now since we ran as a
-	// service. Otherwise, just fall through to normal operation.
-	if runtime.GOOS == "windows" {
-		isService, err := winServiceMain()
-		if err != nil {
-			os.Exit(1)
-		}
-		if isService {
-			os.Exit(0)
-		}
-	}
 
 	// Work around defer not working after os.Exit()
 	if err := bmdMain(); err != nil {

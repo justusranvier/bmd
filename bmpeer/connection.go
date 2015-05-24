@@ -94,14 +94,10 @@ func (pc *connection) LastRead() time.Time {
 	return t
 }
 
-// LocalAddr returns the localAddr field of the fake connection and satisfies
-// the net.Conn interface.
 func (pc *connection) LocalAddr() net.Addr {
 	return pc.conn.LocalAddr()
 }
 
-// RemoteAddr returns the remoteAddr field of the fake connection and satisfies
-// the net.Conn interface.
 func (pc *connection) RemoteAddr() net.Addr {
 	return pc.conn.RemoteAddr()
 }

@@ -62,7 +62,7 @@ var (
 	// userAgentVersion is the user agent version and is used to help
 	// identify ourselves to other bitmessage peers.
 	userAgentVersion = fmt.Sprintf("%d.%d.%d", 0, 0, 1)
-	
+
 	Dial = bmpeer.Dial
 )
 
@@ -201,7 +201,7 @@ func (p *peer) PushVersionMsg() error {
 	msg.ProtocolVersion = maxProtocolVersion
 
 	p.QueueMessage(msg)
-	
+
 	p.versionSent = true
 	return nil
 }
@@ -216,17 +216,17 @@ func max(x, y int) int {
 
 func (p *peer) PushGetDataMsg(invVect []*wire.InvVect) {
 	ivl := p.inventory.FilterRequested(invVect)
-	
+
 	if len(ivl) == 0 {
 		return
 	}
 
 	x := 0
-	for len(ivl) - x > wire.MaxInvPerMsg {
-		p.QueueMessage(&wire.MsgInv{ivl[x:x+wire.MaxInvPerMsg]})
+	for len(ivl)-x > wire.MaxInvPerMsg {
+		p.QueueMessage(&wire.MsgInv{ivl[x : x+wire.MaxInvPerMsg]})
 		x += wire.MaxInvPerMsg
 	}
-	
+
 	p.QueueMessage(&wire.MsgGetData{ivl[x:]})
 }
 
@@ -234,11 +234,11 @@ func (p *peer) PushInvMsg(invVect []*wire.InvVect) {
 	ivl := p.inventory.FilterKnown(invVect)
 
 	x := 0
-	for len(ivl) - x > wire.MaxInvPerMsg {
-		p.QueueMessage(&wire.MsgInv{ivl[x:x+wire.MaxInvPerMsg]})
+	for len(ivl)-x > wire.MaxInvPerMsg {
+		p.QueueMessage(&wire.MsgInv{ivl[x : x+wire.MaxInvPerMsg]})
 		x += wire.MaxInvPerMsg
 	}
-	
+
 	if len(ivl) > 0 {
 		p.QueueMessage(&wire.MsgInv{ivl[x:]})
 	}
@@ -251,7 +251,7 @@ func (p *peer) PushObjectMsg(sha *wire.ShaHash) error {
 	if err != nil {
 		return err
 	}
-	
+
 	msg, err := wire.DecodeMsgObject(obj)
 	if err != nil {
 		return err
@@ -330,12 +330,9 @@ func (p *peer) updateAddresses(msg *wire.MsgVersion) {
 	} else {
 		// A peer might not be advertising the same address that it
 		// actually connected from. One example of why this can happen
-		// is with NAT. Only add the address to the address manager if
-		// the addresses agree.
-		if addrmgr.NetAddressKey(msg.AddrMe) == addrmgr.NetAddressKey(p.na) {
-			p.server.addrManager.AddAddress(p.na, p.na)
-			p.server.addrManager.Good(p.na)
-		}
+		// is with NAT. Only add the actual address to the address manager.
+		p.server.addrManager.AddAddress(p.na, p.na)
+		p.server.addrManager.Good(p.na)
 	}
 }
 
@@ -362,7 +359,7 @@ func (p *peer) handleVersionMsg(msg *wire.MsgVersion) {
 		return
 	}
 	p.versionKnown = true
-	
+
 	// Set the supported services for the peer to what the remote peer
 	// advertised.
 	p.services = msg.Services
@@ -402,7 +399,7 @@ func (p *peer) handleVersionMsg(msg *wire.MsgVersion) {
 
 	// Update the address manager.
 	p.updateAddresses(msg)
-	
+
 	p.handleInitialConnection()
 }
 
@@ -411,7 +408,7 @@ func (p *peer) handleVerAckMsg() {
 	if !p.versionSent {
 		p.Disconnect()
 	}
-	
+
 	p.verAckReceived = true
 	p.handleInitialConnection()
 }
@@ -421,67 +418,57 @@ func (p *peer) handleVerAckMsg() {
 // accordingly. We pass the message down to objectmanager which will call
 // QueueMessage with any appropriate responses.
 func (p *peer) handleInvMsg(msg *wire.MsgInv) {
-	// Disconnect if the message is too big. 
-	if len(msg.InvList) > wire.MaxInvPerMsg || len(msg.InvList) == 0 {
+	// Disconnect if the message is too big.
+	if len(msg.InvList) == 0 {
 		p.Disconnect()
 	}
-	
-	// Add inv to known inventory. 
-	for _, invVect := range msg.InvList {
-		p.inventory.AddKnownInventory(invVect)
-	}
-	
- 	p.server.objectManager.QueueInv(msg, p)
+
+	p.server.objectManager.QueueInv(msg, p)
 }
 
 // handleGetData is invoked when a peer receives a getdata message and
 // is used to deliver object information.
 // TODO this function used to wait for each message to be sent so as to avid
 // using up too much memory. It still needs to be able to do that, but the
-// redesign of peer made it unable to work the way it was originally designed. 
+// redesign of peer made it unable to work the way it was originally designed.
 func (p *peer) handleGetDataMsg(msg *wire.MsgGetData) {
 	for _, iv := range msg.InvList {
 		p.PushObjectMsg(&iv.Hash)
 	}
 }
 
-// handleInitialConnection is called once the initial handshake is complete. 
+// handleInitialConnection is called once the initial handshake is complete.
 func (p *peer) handleInitialConnection() {
-	if !(p.VersionKnown()&&p.verAckReceived) {
+	if !(p.VersionKnown() && p.verAckReceived) {
 		return
 	}
 	//The initial handshake is complete.
-	
+
 	p.StatsMtx.Lock()
 	p.handshakeComplete = true
 	p.StatsMtx.Unlock()
 
 	// Signal the object manager that a new peer has been connected.
 	p.server.objectManager.NewPeer(p)
-	
-	// Send a big addr message. 
+
+	// Send a big addr message.
 	p.PushAddrMsg(p.server.addrManager.AddressCache())
-	
-	// Send a big inv message. 
+
+	// Send a big inv message.
 	hashes, _ := p.server.db.FetchRandomInvHashes(wire.MaxInvPerMsg,
-		func(*wire.ShaHash, []byte) bool {return true})
+		func(*wire.ShaHash, []byte) bool { return true })
 	invVectList := make([]*wire.InvVect, len(hashes))
 	for i, hash := range hashes {
 		invVectList[i] = &wire.InvVect{hash}
 	}
+
 	p.PushInvMsg(invVectList)
 }
 
-// 
+// handleObjectMsg is invoked when a peer receives an object message.
 func (p *peer) handleObjectMsg(msg wire.Message) {
-	
-	// TODO should we disconnect the peer if the object was not requested? 
-	// We don't remember everything that has been requested necessarily. 
-
-	p.inventory.DeleteRequest(&wire.InvVect{*wire.MessageHash(msg)})
-	
-	// Send the object to the object handler to be handled. 
-	p.server.objectManager.handleObjectMsg(msg)
+	// Send the object to the object handler to be handled.
+	p.server.objectManager.QueueObject(msg, p)
 }
 
 // handleAddrMsg is invoked when a peer receives an addr bitmessage message and
@@ -545,34 +532,27 @@ out:
 			case *wire.MsgVersion:
 				p.handleVersionMsg(msg)
 				markConnected = true
-	
+
 			case *wire.MsgVerAck:
 				p.handleVerAckMsg()
 				markConnected = true
-				
-			default :
+
+			default:
 				p.Disconnect()
 			}
-			
+
 			// reset the timer.
-			idleTimer.Reset(negotiateTimeoutSeconds*time.Second)
+			idleTimer.Reset(negotiateTimeoutSeconds * time.Second)
 		} else {
 			switch msg := rmsg.(type) {
-			case *wire.MsgVersion:
-				p.handleVersionMsg(msg)
-				markConnected = true
-	
-			case *wire.MsgVerAck:
-				markConnected = true
-
 			case *wire.MsgAddr:
 				p.handleAddrMsg(msg)
 				markConnected = true
-	
+
 			case *wire.MsgInv:
 				p.handleInvMsg(msg)
 				markConnected = true
-	
+
 			case *wire.MsgGetData:
 				getData := rmsg.(*wire.MsgGetData)
 				p.sendQueue.QueueDataRequest(getData.InvList)
@@ -582,7 +562,7 @@ out:
 				p.handleObjectMsg(msg)
 				markConnected = true
 			}
-			
+
 			// reset the timer.
 			idleTimer.Reset(idleTimeoutMinutes * time.Minute)
 		}
@@ -611,7 +591,7 @@ out:
 	if p.HandshakeComplete() {
 		p.server.objectManager.DonePeer(p)
 	}
-	
+
 	p.server.donePeers <- p
 }
 
@@ -628,11 +608,15 @@ func (p *peer) Disconnect() {
 	if atomic.AddInt32(&p.disconnect, 1) != 1 {
 		return
 	}
-	
-	//The send que could possibly be nil if Start() was never called on this peer.
+
+	// SendQueue could possibly be nil if Start() was never called on this peer.
 	if p.sendQueue != nil {
 		p.sendQueue.Stop()
 	}
+
+	// Remove peer from object manager.
+	p.server.objectManager.DonePeer(p)
+
 	if atomic.LoadInt32(&p.connected) != 0 {
 		p.conn.Close()
 	}
@@ -688,9 +672,9 @@ func newPeerBase(s *server, inbound bool) *peer {
 		bmnet:           wire.MainNet,
 		services:        wire.SFNodeNetwork,
 		inbound:         inbound,
-		inventory:       inventory, 
-		sendQueue:       bmpeer.NewSendQueue(inventory), 
-		knownAddresses:  make(map[string]struct{}), 
+		inventory:       inventory,
+		sendQueue:       bmpeer.NewSendQueue(inventory),
+		knownAddresses:  make(map[string]struct{}),
 	}
 	return &p
 }

@@ -14,7 +14,14 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/monetas/bmd/database"
 	"github.com/monetas/bmutil/wire"
+)
+
+const (
+	// queueSize is the size of data and message queues. TODO arbitrarily set as
+	// 20.
+	queueSize = 20
 )
 
 // SendQueue represents the part of a bitmessage peer that handles data
@@ -176,7 +183,7 @@ out:
 			break out
 		case invList := <-sq.requestQueue:
 			for _, inv := range invList {
-				msg := sq.inventory.RetrieveObject(inv)
+				msg := retrieveObject(sq.inventory.db, inv)
 				if msg != nil {
 					sq.dataQueue <- msg
 				}
@@ -280,13 +287,40 @@ out:
 // NewSendQueue returns a new sendQueue object.
 func NewSendQueue(inventory *Inventory) SendQueue {
 	return &sendQueue{
-		trickleTime: time.Second * 10,
-		// TODO I just arbitrarly put 20 here.
-		msgQueue:      make(chan wire.Message, 20),
-		dataQueue:     make(chan wire.Message, 20),
+		trickleTime:   time.Second * 10,
+		msgQueue:      make(chan wire.Message, queueSize),
+		dataQueue:     make(chan wire.Message, queueSize),
 		outputInvChan: make(chan []*wire.InvVect, outputBufferSize),
 		requestQueue:  make(chan []*wire.InvVect, outputBufferSize),
 		quit:          make(chan struct{}),
 		inventory:     inventory,
 	}
+}
+
+// retrieveObject retrieves an object from the database and decodes it.
+// TODO we actually end up decoding the message and then encoding it again when
+// it is sent. That is not necessary.
+func retrieveObject(db database.Db, inv *wire.InvVect) wire.Message {
+	obj := retrieveData(db, inv)
+	if obj != nil {
+		return nil
+	}
+
+	msg, err := wire.DecodeMsgObject(obj)
+	if err != nil {
+		return nil
+	}
+
+	return msg
+}
+
+// retrieveData retrieves an object from the database and returns it as a byte
+// slice.
+func retrieveData(db database.Db, inv *wire.InvVect) []byte {
+	obj, err := db.FetchObjectByHash(&inv.Hash)
+	if err != nil {
+		return nil
+	}
+
+	return obj
 }
