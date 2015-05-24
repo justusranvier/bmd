@@ -467,7 +467,7 @@ func (mock *MockConnection) ReadMessage() (wire.Message, error) {
 	switch t := toSend.(type) {
 	case *wire.MsgGetPubKey, *wire.MsgPubKey, *wire.MsgMsg, *wire.MsgBroadcast, *wire.MsgUnknownObject:
 		mock.objectData = append(mock.objectData, wire.MessageHash(t))
-	}
+	}	
 
 	return toSend, nil
 }
@@ -525,8 +525,15 @@ func (mock *MockConnection) RemoteAddr() net.Addr {
 	return mock.remoteAddr
 }
 
-func (mock *MockConnection) Close() error {
-	return nil
+func (mock *MockConnection) Close() {
+}
+
+func (mock *MockConnection) Connected() bool {
+	return true
+}
+
+func (mock *MockConnection) Connect() error {
+	return errors.New("Already connected.")
 }
 
 func (mock *MockConnection) handleMessage(msg wire.Message) *PeerAction {
@@ -747,21 +754,22 @@ func TestOutboundPeerHandshake(t *testing.T) {
 			InteractionComplete : true,
 			DisconnectExpected : true, 
 		}, 
+		// TODO send more improperly timed messages here. GetData, inv, and object all need to be tested for disconnection. 
 	}
 	
 	localAddr := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 8333}
 	remoteAddr := &net.TCPAddr{IP: net.ParseIP("192.168.0.1"), Port: 8333}
 
 	// A peer that establishes a handshake for outgoing peers.
-	handshakePeerBuilder := func(action *PeerAction) func(string, string) (bmpeer.Connection, error) {
-		return func(service, addr string) (bmpeer.Connection, error) {
+	handshakePeerBuilder := func(action *PeerAction) func(net.Addr) (bmpeer.Connection) {
+		return func(addr net.Addr) bmpeer.Connection {
 			return NewMockConnection(localAddr, remoteAddr, report, 
-					NewOutboundHandshakePeerTester(action, msgAddr)), nil
+					NewOutboundHandshakePeerTester(action, msgAddr))
 		}
 	}
 	
 	for test_case, response := range responses {
-		Dial = handshakePeerBuilder(response)
+		NewConn = handshakePeerBuilder(response)
 
 		// Create server and start it.
 		listeners := []string{net.JoinHostPort("", "8445")}
@@ -783,6 +791,8 @@ func TestOutboundPeerHandshake(t *testing.T) {
 
 		serv.WaitForShutdown()
 	}
+	
+	NewConn = bmpeer.NewConnection
 }
 
 // Test cases:
@@ -853,7 +863,7 @@ func TestInboundPeerHandshake(t *testing.T) {
 		}, 
 	}
 
-	for test_case, open := range openingMsg {		
+	for test_case, open := range openingMsg {
 		// Create server and start it.
 		listeners := []string{net.JoinHostPort("", "8445")}
 		var err error

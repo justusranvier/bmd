@@ -8,6 +8,7 @@ import (
 	"net"
 	"sync"
 	"time"
+	"errors"
 
 	"github.com/monetas/bmutil/wire"
 )
@@ -25,8 +26,10 @@ type Connection interface {
 	LastWrite() time.Time
 	LastRead() time.Time
 	RemoteAddr() net.Addr
-	LocalAddr() net.Addr
-	Close() error
+	//LocalAddr() net.Addr
+	Connected() bool
+	Connect() error
+	Close()
 }
 
 // TODO handle timeout and ping/pong issues.
@@ -34,11 +37,13 @@ type Connection interface {
 // real outside bitmessage node over the internet.
 type connection struct {
 	conn          net.Conn
+	addr          net.Addr
 	mtx           sync.Mutex
 	bytesSent     uint64
 	bytesReceived uint64
 	lastRead      time.Time
 	lastWrite     time.Time
+	timeConnected time.Time
 }
 
 func (pc *connection) WriteMessage(msg wire.Message) error {
@@ -49,17 +54,25 @@ func (pc *connection) WriteMessage(msg wire.Message) error {
 	pc.bytesSent += uint64(n)
 	pc.lastWrite = time.Now()
 	pc.mtx.Unlock()
-	return err
+	
+	if err != nil {
+		pc.conn = nil
+		return err
+	}
+
+	return nil
 }
 
 func (pc *connection) ReadMessage() (wire.Message, error) {
 	n, msg, _, err := wire.ReadMessageN(pc.conn, wire.MainNet)
+
 	pc.mtx.Lock()
 	pc.bytesReceived += uint64(n)
 	pc.lastRead = time.Now()
 	pc.mtx.Unlock()
 
 	if err != nil {
+		pc.conn = nil
 		return nil, err
 	}
 
@@ -96,31 +109,52 @@ func (pc *connection) LastRead() time.Time {
 
 // LocalAddr returns the localAddr field of the fake connection and satisfies
 // the net.Conn interface.
-func (pc *connection) LocalAddr() net.Addr {
+/*func (pc *connection) LocalAddr() net.Addr {
+	if pc.conn == nil {
+		return nil
+	}
 	return pc.conn.LocalAddr()
-}
+}*/
 
 // RemoteAddr returns the remoteAddr field of the fake connection and satisfies
 // the net.Conn interface.
 func (pc *connection) RemoteAddr() net.Addr {
+	if pc.conn == nil {
+		return nil
+	}
 	return pc.conn.RemoteAddr()
 }
 
-func (pc *connection) Close() error {
-	return pc.conn.Close()
+func (pc *connection) Close() {
+	if pc.conn != nil {
+		pc.conn.Close()
+		pc.conn = nil
+	}
+}
+
+func (pc *connection) Connected() bool {
+	return pc.conn != nil
 }
 
 var dial = net.Dial
 
-// Dial creates a new peerConnection and
-// dials out to the given address.
-func Dial(service, addr string) (Connection, error) {
-	conn, err := dial(service, addr)
-	if err != nil {
-		return nil, err
+func (pc *connection) Connect() error {
+	if pc.Connected() {
+		return errors.New("already connected.")
 	}
+	
+	conn, err := dial("tcp", pc.addr.String())
+	if err != nil {
+		return err
+	}
+	pc.timeConnected = time.Now()
+	pc.conn = conn
+	return nil
+}
 
+func NewConnection(addr net.Addr) Connection {
 	return &connection{
-		conn: conn,
-	}, nil
+		addr: addr, 
+		timeConnected: time.Now(), 
+	}
 }

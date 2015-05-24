@@ -1,6 +1,7 @@
 package bmpeer
 
 import (
+	"net"
 	"github.com/monetas/bmutil/wire"
 )
 
@@ -26,6 +27,9 @@ const (
 type Logic interface {
 	State() PeerState
 	ProtocolVersion() uint32
+	Addr() net.Addr
+	NetAddress() *wire.NetAddress
+	Inbound() bool
 
 	HandleVersionMsg(*wire.MsgVersion) error
 	HandleVerAckMsg() error
@@ -36,7 +40,7 @@ type Logic interface {
 
 	PushVersionMsg()
 	PushVerAckMsg()
-	PushAddrMsg(addresses []*wire.NetAddress)
+	PushAddrMsg(addresses []*wire.NetAddress) error
 	PushInvMsg(invVect []*wire.InvVect)
 	PushGetDataMsg(invVect []*wire.InvVect)
 	PushObjectMsg(sha *wire.ShaHash)

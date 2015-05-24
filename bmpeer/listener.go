@@ -32,6 +32,7 @@ func (pl *listener) Accept() (Connection, error) {
 	}
 	return &connection{
 		conn: conn,
+		addr: conn.RemoteAddr(),
 	}, nil
 }
 

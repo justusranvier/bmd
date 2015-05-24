@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 
 	"github.com/monetas/bmd/database"
+	"github.com/monetas/bmd/bmpeer"
 	"github.com/monetas/bmutil/wire"
 )
 
@@ -164,8 +165,8 @@ func (om *objectManager) handleInvMsg(imsg *invMsg) {
 	}
 
 	// TODO This hack sends the getData message to ALL peers, which is completely dumb.
-	om.server.state.forAllPeers(func (p *peer) {
-		p.PushGetDataMsg(requestQueue[:i])
+	om.server.state.forAllPeers(func (p *bmpeer.Peer) {
+		p.Logic().PushGetDataMsg(requestQueue[:i])
 	})
 }
 

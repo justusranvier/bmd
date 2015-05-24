@@ -22,10 +22,12 @@ import (
 // MockConnection implements the Connection interface and is used to test
 // sendQueue without connecting to the real internet.
 type MockConnection struct {
-	closed  bool
-	failure bool // When this is true, sending messages returns an error.
-	done    chan struct{}
-	reply   chan wire.Message
+	closed   bool
+	failure  bool // When this is true, sending or receiving messages returns an error.
+	done     chan struct{}
+	failChan chan struct{}
+	reply    chan wire.Message
+	send     chan wire.Message
 }
 
 func (mock *MockConnection) WriteMessage(msg wire.Message) error {
@@ -61,7 +63,20 @@ func (mock *MockConnection) MockRead(reset chan struct{}) wire.Message {
 }
 
 func (mock *MockConnection) ReadMessage() (wire.Message, error) {
-	return nil, errors.New("This mock connection does not send messages.")
+	if mock.failure {
+		return nil, errors.New("Mock Connection set to fail.")
+	}
+
+	select {
+	case msg := <-mock.send :
+		return msg, nil
+	case <-mock.failChan :
+		return nil, errors.New("Mock Connection set to fail.")
+	}
+}
+
+func (mock *MockConnection) MockWrite(msg wire.Message) {
+	mock.send <- msg
 }
 
 func (mock *MockConnection) BytesWritten() uint64 {
@@ -89,6 +104,9 @@ func (mock *MockConnection) LocalAddr() net.Addr {
 }
 
 func (mock *MockConnection) Close() error {
+	if mock.closed {
+		return nil
+	}
 	mock.closed = true
 	close(mock.done)
 
@@ -115,13 +133,22 @@ func (mock *MockConnection) SetFailure(b bool) {
 		case <-mock.done:
 		default:
 		}
+		
+		// Close the failure channel to ensure any messages being read 
+		// will return an error.
+		close(mock.failChan)
+		
+	} else {
+		mock.failChan = make(chan struct{})
 	}
 }
 
 func NewMockConnection() *MockConnection {
 	return &MockConnection{
-		done:  make(chan struct{}),
-		reply: make(chan wire.Message),
+		done:     make(chan struct{}),
+		reply:    make(chan wire.Message),
+		send:     make(chan wire.Message),
+		failChan: make(chan struct{}), 
 	}
 }
 
@@ -239,16 +266,44 @@ func TestStartStop(t *testing.T) {
 	}
 
 	queue.Start(conn)
-	if queue.Running() {
+	if !queue.Running() {
 		t.Errorf("queue should be running. ")
 	}
 	queue.Stop()
 	if queue.Running() {
 		t.Errorf("queue should not be running anymore. ")
 	}
-
-	// TODO For full coverage, should try to start and stop the queue at the
-	// same time, but I don't know know to create this situation.
+	
+	// Test the case in which Start and Stop end prematurely because they 
+	// are being called by another go routine. 
+	waitChan := make(chan struct{})
+	startChan := make(chan struct{})
+	stopChan := make(chan struct{})
+	go func () {
+		bmpeer.TstStartWait(queue, conn, waitChan, startChan)
+		stopChan <- struct{}{}
+	} ()
+	// Make sure the queue is definitely in the middle of starting. 
+	<-startChan
+	queue.Start(conn) 
+	waitChan <- struct{}{}
+	<-stopChan
+	if !queue.Running() {
+		t.Errorf("queue should be running after being started twice. ")
+	}
+	
+	go func () {
+		bmpeer.TstStopWait(queue, waitChan, startChan)
+		stopChan <- struct{}{}
+	} ()
+	// Make sure the queue is in the process of stopping already. 
+	<-startChan
+	queue.Stop() 
+	waitChan <- struct{}{}
+	<-stopChan
+	if queue.Running() {
+		t.Errorf("queue should not be running. ")
+	}
 }
 
 func TestSendMessage(t *testing.T) {

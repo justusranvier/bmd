@@ -3,8 +3,8 @@ package bmpeer
 import (
 	"sync/atomic"
 	"time"
+	"errors"
 
-	"github.com/monetas/bmd/database"
 	"github.com/monetas/bmutil/wire"
 )
 
@@ -47,16 +47,21 @@ type Peer struct {
 	conn      Connection
 
 	started    int32
-	connected  int32
 	disconnect int32 // only to be used atomically
 
 	quit chan struct{}
+	
+	Persistent bool
+	RetryCount int64
+}
+
+func (p *Peer) Logic() Logic {
+	return p.logic
 }
 
 // Connected returns whether or not the peer is currently connected.
 func (p *Peer) Connected() bool {
-	return atomic.LoadInt32(&p.connected) != 0 &&
-		atomic.LoadInt32(&p.disconnect) == 0
+	return p.conn.Connected() && atomic.LoadInt32(&p.disconnect) == 0
 }
 
 // Disconnect disconnects the peer by closing the connection. It also sets
@@ -70,7 +75,7 @@ func (p *Peer) Disconnect() {
 	p.sendQueue.Stop()
 	close(p.quit)
 
-	if atomic.LoadInt32(&p.connected) != 0 {
+	if p.conn.Connected() {
 		p.conn.Close()
 	}
 }
@@ -82,18 +87,40 @@ func (p *Peer) Start() error {
 	if atomic.AddInt32(&p.started, 1) != 1 {
 		return nil
 	}
+	
+	if !p.conn.Connected() {
+		err := p.Connect()
+		if err != nil {
+			return err
+		}
+	}
 
 	p.sendQueue.Start(p.conn)
 
-	// Send an initial version message if this is an outbound connection.
-	// TODO
-	/*if !p.inbound {
-		p.PushVersionMsg()
-	}*/
+	// Send initial version message if necessary. 
+	if !p.logic.Inbound() {
+		p.logic.PushVersionMsg()
+	}
 
 	// Start processing input and output.
 	go p.inHandler()
+	return nil
+}
 
+func (p *Peer) Connect() error {
+	if p.conn.Connected() {
+		return nil
+	}
+	
+	if atomic.LoadInt32(&p.disconnect) != 0 {
+		return errors.New("Disconnection in progress.")
+	}
+	
+	err := p.conn.Connect()
+	if err != nil {
+		return err 
+	}
+	
 	return nil
 }
 
@@ -181,10 +208,13 @@ out:
 }
 
 // NewPeer returns a new Peer object.
-func NewPeer(logic Logic, conn Connection, db database.Db) *Peer {
+func NewPeer(logic Logic, conn Connection, sendQueue SendQueue, persistent bool, retrys int64) *Peer {
 	return &Peer{
-		logic:     logic,
-		sendQueue: NewSendQueue(NewInventory(db)),
-		conn:      conn,
+		logic:         logic,
+		sendQueue:     sendQueue,
+		conn:          conn,
+		quit:          make(chan struct{}),
+		Persistent:    persistent,
+		RetryCount:    retrys, 
 	}
 }

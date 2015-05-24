@@ -13,10 +13,9 @@ import (
 	"net"
 	"strconv"
 	"sync"
-	"sync/atomic"
 	"time"
+	"errors"
 
-	"github.com/btcsuite/go-socks/socks"
 	"github.com/monetas/bmd/addrmgr"
 	"github.com/monetas/bmd/bmpeer"
 	"github.com/monetas/bmutil/wire"
@@ -62,48 +61,7 @@ var (
 	// userAgentVersion is the user agent version and is used to help
 	// identify ourselves to other bitmessage peers.
 	userAgentVersion = fmt.Sprintf("%d.%d.%d", 0, 0, 1)
-	
-	Dial = bmpeer.Dial
 )
-
-// newNetAddress attempts to extract the IP address and port from the passed
-// net.Addr interface and create a bitmessage NetAddress structure using that
-// information.
-func newNetAddress(addr net.Addr, stream uint32, services wire.ServiceFlag) (*wire.NetAddress, error) {
-	// addr will be a net.TCPAddr when not using a proxy.
-	if tcpAddr, ok := addr.(*net.TCPAddr); ok {
-		ip := tcpAddr.IP
-		port := uint16(tcpAddr.Port)
-		na := wire.NewNetAddressIPPort(ip, port, stream, services)
-		return na, nil
-	}
-
-	// addr will be a socks.ProxiedAddr when using a proxy.
-	if proxiedAddr, ok := addr.(*socks.ProxiedAddr); ok {
-		ip := net.ParseIP(proxiedAddr.Host)
-		if ip == nil {
-			ip = net.ParseIP("0.0.0.0")
-		}
-		port := uint16(proxiedAddr.Port)
-		na := wire.NewNetAddressIPPort(ip, port, stream, services)
-		return na, nil
-	}
-
-	// For the most part, addr should be one of the two above cases, but
-	// to be safe, fall back to trying to parse the information from the
-	// address string as a last resort.
-	host, portStr, err := net.SplitHostPort(addr.String())
-	if err != nil {
-		return nil, err
-	}
-	ip := net.ParseIP(host)
-	port, err := strconv.ParseUint(portStr, 10, 16)
-	if err != nil {
-		return nil, err
-	}
-	na := wire.NewNetAddressIPPort(ip, uint16(port), stream, services)
-	return na, nil
-}
 
 // peer provides a bitmessage peer for handling bitmessage communications. The
 // overall data flow is split into 3 goroutines and a separate object manager.
@@ -125,18 +83,18 @@ func newNetAddress(addr net.Addr, stream uint32, services wire.ServiceFlag) (*wi
 type peer struct {
 	server            *server
 	bmnet             wire.BitmessageNet
-	started           int32
-	connected         int32
-	disconnect        int32 // only to be used atomically
-	conn              bmpeer.Connection
+	//started           int32
+	//connected         int32
+	//disconnect        int32 // only to be used atomically
+	//conn              bmpeer.Connection
 	sendQueue         bmpeer.SendQueue
 	inventory         *bmpeer.Inventory
-	addr              string
+	addr              net.Addr
 	na                *wire.NetAddress
 	inbound           bool
-	persistent        bool
+	//persistent        bool
 	knownAddresses    map[string]struct{}
-	retryCount        int64
+	//retryCount        int64
 	StatsMtx          sync.Mutex // protects all statistics below here.
 	versionKnown      bool
 	versionSent       bool
@@ -144,16 +102,10 @@ type peer struct {
 	handshakeComplete bool
 	protocolVersion   uint32
 	services          wire.ServiceFlag
-	timeConnected     time.Time
-	bytesReceived     uint64
-	bytesSent         uint64
+	//timeConnected     time.Time
+	//bytesReceived     uint64
+	//bytesSent         uint64
 	userAgent         string
-}
-
-// String returns the peer's address and directionality as a human-readable
-// string.
-func (p *peer) String() string {
-	return fmt.Sprintf("%s (inbound: %s)", p.addr, p.inbound)
 }
 
 // VersionKnown returns the whether or not the version of a peer is known locally.
@@ -174,6 +126,28 @@ func (p *peer) HandshakeComplete() bool {
 	return p.handshakeComplete
 }
 
+func (p *peer) Addr() net.Addr {
+	return p.addr
+}
+
+func (p *peer) NetAddress() *wire.NetAddress {
+	return p.na
+}
+
+func (p *peer) Inbound() bool {
+	return p.inbound
+}
+
+func (p *peer) State() bmpeer.PeerState {
+	if p.HandshakeComplete() {
+		return bmpeer.PeerStateHandshakeComplete
+	}
+	if p.VersionKnown() {
+		return bmpeer.PeerStateVersionKnown
+	}
+	return bmpeer.PeerStateNew
+}
+
 // ProtocolVersion returns the peer protocol version in a manner that is safe
 // for concurrent access.
 func (p *peer) ProtocolVersion() uint32 {
@@ -185,8 +159,14 @@ func (p *peer) ProtocolVersion() uint32 {
 
 // pushVersionMsg sends a version message to the connected peer using the
 // current state.
-func (p *peer) PushVersionMsg() error {
+// TODO don't send at an inappropriate time. 
+func (p *peer) PushVersionMsg() {
 	theirNa := p.na
+	// p.na could be nil if this is an inbound peer but the version message
+	// has not yet been processed. 
+	if theirNa == nil {
+		return
+	}
 
 	// Version message.
 	msg := wire.NewMsgVersion(
@@ -203,7 +183,10 @@ func (p *peer) PushVersionMsg() error {
 	p.QueueMessage(msg)
 	
 	p.versionSent = true
-	return nil
+}
+
+func (p *peer) PushVerAckMsg() {
+	p.QueueMessage(&wire.MsgVerAck{})
 }
 
 func max(x, y int) int {
@@ -246,19 +229,17 @@ func (p *peer) PushInvMsg(invVect []*wire.InvVect) {
 
 // pushObjectMsg sends an object message for the provided object hash to the
 // connected peer.  An error is returned if the block hash is not known.
-func (p *peer) PushObjectMsg(sha *wire.ShaHash) error {
+func (p *peer) PushObjectMsg(sha *wire.ShaHash) {
 	obj, err := p.server.db.FetchObjectByHash(sha)
 	if err != nil {
-		return err
+		return
 	}
 	
 	msg, err := wire.DecodeMsgObject(obj)
 	if err != nil {
-		return err
+		return
 	}
 	p.QueueMessage(msg)
-
-	return nil
 }
 
 // pushAddrMsg sends one, or more, addr message(s) to the connected peer using
@@ -266,7 +247,7 @@ func (p *peer) PushObjectMsg(sha *wire.ShaHash) error {
 func (p *peer) PushAddrMsg(addresses []*wire.NetAddress) error {
 	// Nothing to send.
 	if len(addresses) == 0 {
-		return nil
+		return errors.New("Address list is empty.")
 	}
 
 	r := prand.New(prand.NewSource(time.Now().UnixNano()))
@@ -288,7 +269,7 @@ func (p *peer) PushAddrMsg(addresses []*wire.NetAddress) error {
 		// Add the address to the message.
 		err := msg.AddAddress(na)
 		if err != nil {
-			return err
+			return errors.New("Address could not be added.")
 		}
 		numAdded++
 	}
@@ -299,14 +280,13 @@ func (p *peer) PushAddrMsg(addresses []*wire.NetAddress) error {
 		}
 
 		p.QueueMessage(msg)
+		return nil
 	}
-	return nil
+	return errors.New("No addresses added.")
 }
 
 func (p *peer) QueueMessage(msg wire.Message) {
-	if p.sendQueue.QueueMessage(msg) != nil {
-		p.Disconnect()
-	}
+	p.sendQueue.QueueMessage(msg)
 }
 
 // updateAddresses potentially adds addresses to the address manager and
@@ -315,6 +295,7 @@ func (p *peer) QueueMessage(msg wire.Message) {
 // and the negotiated protocol version.
 func (p *peer) updateAddresses(msg *wire.MsgVersion) {
 	// Outbound connections.
+	// TODO figure out how to refactor this.
 	if !p.inbound {
 		// TODO(davec): Only do this if not doing the initial block
 		// download and the local address is routable.
@@ -339,14 +320,13 @@ func (p *peer) updateAddresses(msg *wire.MsgVersion) {
 	}
 }
 
-// handleVersionMsg is invoked when a peer receives a version bitmessage message
+// HandleVersionMsg is invoked when a peer receives a version bitmessage message
 // and is used to negotiate the protocol version details as well as kick start
 // the communications.
-func (p *peer) handleVersionMsg(msg *wire.MsgVersion) {
+func (p *peer) HandleVersionMsg(msg *wire.MsgVersion) error {
 	// Detect self connections.
 	if msg.Nonce == p.server.nonce {
-		p.Disconnect()
-		return
+		return errors.New("Self connection detected.")
 	}
 
 	// Updating a bunch of stats.
@@ -354,12 +334,9 @@ func (p *peer) handleVersionMsg(msg *wire.MsgVersion) {
 
 	// Limit to one version message per peer.
 	if p.versionKnown {
-		p.logError("Only one version message per peer is allowed %s.",
-			p)
 		p.StatsMtx.Unlock()
 
-		p.Disconnect()
-		return
+		return errors.New("Only one version message allowed per peer.")
 	}
 	p.versionKnown = true
 	
@@ -373,28 +350,21 @@ func (p *peer) handleVersionMsg(msg *wire.MsgVersion) {
 	p.StatsMtx.Unlock()
 
 	// Inbound connections.
+	// TODO
 	if p.inbound {
 		// Set up a NetAddress for the peer to be used with AddrManager.
 		// We only do this inbound because outbound set this up
 		// at connection time and no point recomputing.
 		// We only use the first stream number for now because bitmessage has
 		// only one stream.
-		na, err := newNetAddress(p.conn.RemoteAddr(), uint32(msg.StreamNumbers[0]), p.services)
+		na, err := wire.NewNetAddress(p.addr, uint32(msg.StreamNumbers[0]), p.services)
 		if err != nil {
-			p.logError("Can't get remote address: %v", err)
-			p.Disconnect()
-			return
+			return errors.New(fmt.Sprintf("Can't send version message: %s",err))
 		}
 		p.na = na
 
 		// Send version.
-		err = p.PushVersionMsg()
-		if err != nil {
-			p.logError("Can't send version message to %s: %v",
-				p, err)
-			p.Disconnect()
-			return
-		}
+		p.PushVersionMsg()
 	}
 
 	// Send verack.
@@ -404,26 +374,32 @@ func (p *peer) handleVersionMsg(msg *wire.MsgVersion) {
 	p.updateAddresses(msg)
 	
 	p.handleInitialConnection()
+	return nil
 }
 
-func (p *peer) handleVerAckMsg() {
+func (p *peer) HandleVerAckMsg() error {
 	// If no version message has been sent disconnect.
 	if !p.versionSent {
-		p.Disconnect()
+		return errors.New("Version not yet received.")
 	}
 	
 	p.verAckReceived = true
 	p.handleInitialConnection()
+	return nil
 }
 
-// handleInvMsg is invoked when a peer receives an inv bitmessage message and is
+// HandleInvMsg is invoked when a peer receives an inv bitmessage message and is
 // used to examine the inventory being advertised by the remote peer and react
 // accordingly. We pass the message down to objectmanager which will call
 // QueueMessage with any appropriate responses.
-func (p *peer) handleInvMsg(msg *wire.MsgInv) {
+func (p *peer) HandleInvMsg(msg *wire.MsgInv) error {
+	if !p.HandshakeComplete() {
+		return errors.New("Handshake not complete.")
+	}
+	
 	// Disconnect if the message is too big. 
 	if len(msg.InvList) > wire.MaxInvPerMsg || len(msg.InvList) == 0 {
-		p.Disconnect()
+		return errors.New("Incorrect inv size.")
 	}
 	
 	// Add inv to known inventory. 
@@ -432,17 +408,70 @@ func (p *peer) handleInvMsg(msg *wire.MsgInv) {
 	}
 	
  	p.server.objectManager.QueueInv(msg, p)
+	return nil
 }
 
-// handleGetData is invoked when a peer receives a getdata message and
+// HandleGetData is invoked when a peer receives a getdata message and
 // is used to deliver object information.
-// TODO this function used to wait for each message to be sent so as to avid
-// using up too much memory. It still needs to be able to do that, but the
-// redesign of peer made it unable to work the way it was originally designed. 
-func (p *peer) handleGetDataMsg(msg *wire.MsgGetData) {
-	for _, iv := range msg.InvList {
-		p.PushObjectMsg(&iv.Hash)
+func (p *peer) HandleGetDataMsg(msg *wire.MsgGetData) error {
+	if !p.HandshakeComplete() {
+		return errors.New("Handshake not complete.")
 	}
+	
+	err := p.sendQueue.QueueDataRequest(msg.InvList)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// 
+func (p *peer) HandleObjectMsg(msg wire.Message) error {
+	if !p.HandshakeComplete() {
+		return errors.New("Handshake not complete.")
+	}
+	
+	// TODO should we disconnect the peer if the object was not requested? 
+	// We don't remember everything that has been requested necessarily. 
+
+	p.inventory.DeleteRequest(&wire.InvVect{*wire.MessageHash(msg)})
+	
+	// Send the object to the object handler to be handled. 
+	p.server.objectManager.handleObjectMsg(msg)
+	return nil
+}
+
+// HandleAddrMsg is invoked when a peer receives an addr bitmessage message and
+// is used to notify the server about advertised addresses.
+func (p *peer) HandleAddrMsg(msg *wire.MsgAddr) error {
+	if !p.HandshakeComplete() {
+		return errors.New("Handshake not complete.")
+	}
+	
+	// A message that has no addresses is invalid.
+	if len(msg.AddrList) == 0 {
+		return errors.New("Empty addr message received.")
+	}
+
+	for _, na := range msg.AddrList {
+
+		// Set the timestamp to 5 days ago if it's more than 24 hours
+		// in the future so this address is one of the first to be
+		// removed when space is needed.
+		now := time.Now()
+		if na.Timestamp.After(now.Add(time.Minute * 10)) {
+			na.Timestamp = now.Add(-1 * time.Hour * 24 * 5)
+		}
+
+		// Add address to known addresses for this peer.
+		p.knownAddresses[addrmgr.NetAddressKey(na)] = struct{}{}
+	}
+
+	// Add addresses to server address manager. The address manager handles
+	// the details of things such as preventing duplicate addresses, max
+	// addresses, and last seen updates.
+	p.server.addrManager.AddAddresses(msg.AddrList, p.na)
+	return nil
 }
 
 // handleInitialConnection is called once the initial handshake is complete. 
@@ -472,250 +501,43 @@ func (p *peer) handleInitialConnection() {
 	p.PushInvMsg(invVectList)
 }
 
-// 
-func (p *peer) handleObjectMsg(msg wire.Message) {
-	
-	// TODO should we disconnect the peer if the object was not requested? 
-	// We don't remember everything that has been requested necessarily. 
-
-	p.inventory.DeleteRequest(&wire.InvVect{*wire.MessageHash(msg)})
-	
-	// Send the object to the object handler to be handled. 
-	p.server.objectManager.handleObjectMsg(msg)
-}
-
-// handleAddrMsg is invoked when a peer receives an addr bitmessage message and
-// is used to notify the server about advertised addresses.
-func (p *peer) handleAddrMsg(msg *wire.MsgAddr) {
-
-	// A message that has no addresses is invalid.
-	if len(msg.AddrList) == 0 {
-		p.logError("Command [%s] from %s does not contain any addresses",
-			msg.Command(), p)
-		p.Disconnect()
-		return
-	}
-
-	for _, na := range msg.AddrList {
-		// Don't add more address if we're disconnecting.
-		if atomic.LoadInt32(&p.disconnect) != 0 {
-			return
-		}
-
-		// Set the timestamp to 5 days ago if it's more than 24 hours
-		// in the future so this address is one of the first to be
-		// removed when space is needed.
-		now := time.Now()
-		if na.Timestamp.After(now.Add(time.Minute * 10)) {
-			na.Timestamp = now.Add(-1 * time.Hour * 24 * 5)
-		}
-
-		// Add address to known addresses for this peer.
-		p.knownAddresses[addrmgr.NetAddressKey(na)] = struct{}{}
-	}
-
-	// Add addresses to server address manager. The address manager handles
-	// the details of things such as preventing duplicate addresses, max
-	// addresses, and last seen updates.
-	p.server.addrManager.AddAddresses(msg.AddrList, p.na)
-}
-
-// inHandler handles all incoming messages for the peer. It must be run as a
-// goroutine.
-func (p *peer) inHandler() {
-	// peers must complete the initial version negotiation within a shorter
-	// timeframe than a general idle timeout. The timer is then reset below
-	// to idleTimeoutMinutes for all future messages.
-	idleTimer := time.AfterFunc(negotiateTimeoutSeconds*time.Second, func() {
-		p.Disconnect()
-	})
-out:
-	for atomic.LoadInt32(&p.disconnect) == 0 {
-		rmsg, err := p.conn.ReadMessage()
-		// Stop the timer now, if we go around again we will reset it.
-		idleTimer.Stop()
-		if err != nil {
-			break out
-		}
-
-		// Handle each supported message type.
-		markConnected := false
-		if !p.HandshakeComplete() {
-			switch msg := rmsg.(type) {
-			case *wire.MsgVersion:
-				p.handleVersionMsg(msg)
-				markConnected = true
-	
-			case *wire.MsgVerAck:
-				p.handleVerAckMsg()
-				markConnected = true
-				
-			default :
-				p.Disconnect()
-			}
-			
-			// reset the timer.
-			idleTimer.Reset(negotiateTimeoutSeconds*time.Second)
-		} else {
-			switch msg := rmsg.(type) {
-			case *wire.MsgVersion:
-				p.handleVersionMsg(msg)
-				markConnected = true
-	
-			case *wire.MsgVerAck:
-				markConnected = true
-
-			case *wire.MsgAddr:
-				p.handleAddrMsg(msg)
-				markConnected = true
-	
-			case *wire.MsgInv:
-				p.handleInvMsg(msg)
-				markConnected = true
-	
-			case *wire.MsgGetData:
-				getData := rmsg.(*wire.MsgGetData)
-				p.sendQueue.QueueDataRequest(getData.InvList)
-				markConnected = true
-
-			case *wire.MsgGetPubKey, *wire.MsgPubKey, *wire.MsgMsg, *wire.MsgBroadcast, *wire.MsgUnknownObject:
-				p.handleObjectMsg(msg)
-				markConnected = true
-			}
-			
-			// reset the timer.
-			idleTimer.Reset(idleTimeoutMinutes * time.Minute)
-		}
-
-		// Mark the address as currently connected and working as of
-		// now if one of the messages that trigger it was processed.
-		if markConnected && atomic.LoadInt32(&p.disconnect) == 0 {
-			if p.na == nil {
-				continue
-			}
-			p.server.addrManager.Connected(p.na)
-		}
-		// ok we got a message, reset the timer.
-		// timer just calls p.Disconnect() after logging.
-		idleTimer.Reset(idleTimeoutMinutes * time.Minute)
-		p.retryCount = 0
-	}
-
-	idleTimer.Stop()
-
-	// Ensure connection is closed and notify the server that the peer is
-	// done.
-	p.Disconnect()
-
-	// Only tell block manager we are gone if we ever told it we existed.
-	if p.HandshakeComplete() {
-		p.server.objectManager.DonePeer(p)
-	}
-	
-	p.server.donePeers <- p
-}
-
-// Connected returns whether or not the peer is currently connected.
-func (p *peer) Connected() bool {
-	return atomic.LoadInt32(&p.connected) != 0 &&
-		atomic.LoadInt32(&p.disconnect) == 0
-}
-
-// Disconnect disconnects the peer by closing the connection. It also sets
-// a flag so the impending shutdown can be detected.
-func (p *peer) Disconnect() {
-	// did we win the race?
-	if atomic.AddInt32(&p.disconnect, 1) != 1 {
-		return
-	}
-	
-	//The send que could possibly be nil if Start() was never called on this peer.
-	if p.sendQueue != nil {
-		p.sendQueue.Stop()
-	}
-	if atomic.LoadInt32(&p.connected) != 0 {
-		p.conn.Close()
-	}
-}
-
-// Start begins processing input and output messages. It also sends the initial
-// version message for outbound connections to start the negotiation process.
-func (p *peer) Start() error {
-	// Already started?
-	if atomic.AddInt32(&p.started, 1) != 1 {
-		return nil
-	}
-
-	p.sendQueue.Start(p.conn)
-
-	// Send an initial version message if this is an outbound connection.
-	if !p.inbound {
-		err := p.PushVersionMsg()
-		if err != nil {
-			p.logError("Can't send outbound version message %v", err)
-			p.Disconnect()
-			return err
-		}
-		p.versionSent = true
-	}
-
-	// Start processing input and output.
-	go p.inHandler()
-
-	return nil
-}
-
-// Shutdown gracefully shuts down the peer by disconnecting it.
-func (p *peer) Shutdown() {
-	p.Disconnect()
-}
-
-// logError makes sure that we only log errors loudly on user peers.
-func (p *peer) logError(fmt string, args ...interface{}) {
-	if p.persistent {
-	} else {
-	}
-}
-
 // newPeerBase returns a new base bitmessage peer for the provided server and
 // inbound flag. This is used by the newInboundPeer and newOutboundPeer
 // functions to perform base setup needed by both types of peers.
-func newPeerBase(s *server, inbound bool) *peer {
-	inventory := bmpeer.NewInventory(s.db)
-	p := peer{
+func newPeerBase(addr net.Addr, s *server, inventory *bmpeer.Inventory, sendQueue bmpeer.SendQueue, inbound bool) *peer {
+	//inventory := bmpeer.NewInventory(s.db)
+	p := &peer{
 		server:          s,
 		protocolVersion: maxProtocolVersion,
 		bmnet:           wire.MainNet,
 		services:        wire.SFNodeNetwork,
-		inbound:         inbound,
 		inventory:       inventory, 
-		sendQueue:       bmpeer.NewSendQueue(inventory), 
+		sendQueue:       sendQueue, 
+		addr:            addr, 
 		knownAddresses:  make(map[string]struct{}), 
+		inbound:         inbound, 
 	}
-	return &p
+	return p
 }
 
 // newInboundPeer returns a new inbound bitmessage peer for the provided server and
 // connection. Use Start to begin processing incoming and outgoing messages.
-func newInboundPeer(s *server, conn bmpeer.Connection) *peer {
-	p := newPeerBase(s, true)
-	p.conn = conn
-	p.addr = conn.RemoteAddr().String()
-	p.timeConnected = time.Now()
-	atomic.AddInt32(&p.connected, 1)
-	return p
+func newInboundPeer(s *server, conn bmpeer.Connection) *bmpeer.Peer {
+	inventory := bmpeer.NewInventory(s.db)
+	sq := bmpeer.NewSendQueue(inventory)
+	p := newPeerBase(conn.RemoteAddr(), s, inventory, sq, true)
+
+	return bmpeer.NewPeer(p, conn, sq, false, 0)
 }
+
+// Can be swapped out for testing purposes. 
+// TODO handle this more elegantly eventually. 
+var NewConn func(net.Addr) bmpeer.Connection = bmpeer.NewConnection
 
 // newOutbountPeer returns a new outbound bitmessage peer for the provided server and
 // address and connects to it asynchronously. If the connection is successful
 // then the peer will also be started.
-func newOutboundPeer(s *server, addr string, persistent bool, retryCount int64, stream uint32) *peer {
-	p := newPeerBase(s, false)
-	p.addr = addr
-	p.persistent = persistent
-	p.retryCount = retryCount
-	p.versionSent = true
-
+func newOutboundPeer(addr string, s *server, stream uint32, persistent bool, retryCount int64) *bmpeer.Peer {
 	// Setup p.na with a temporary address that we are connecting to with
 	// faked up service flags. We will replace this with the real one after
 	// version negotiation is successful. The only failure case here would
@@ -726,51 +548,46 @@ func newOutboundPeer(s *server, addr string, persistent bool, retryCount int64, 
 	// function returns the peer must have a valid netaddress.
 	host, portStr, err := net.SplitHostPort(addr)
 	if err != nil {
-		p.logError("Tried to create a new outbound peer with invalid "+
-			"address %s: %v", addr, err)
 		return nil
 	}
 
 	port, err := strconv.ParseUint(portStr, 10, 16)
 	if err != nil {
-		p.logError("Tried to create a new outbound peer with invalid "+
-			"port %s: %v", portStr, err)
 		return nil
 	}
 
-	p.na, err = s.addrManager.HostToNetAddress(host, uint16(port), stream, 0)
+	na, err := s.addrManager.HostToNetAddress(host, uint16(port), stream, 0)
 	if err != nil {
-		p.logError("Can not turn host %s into netaddress: %v",
-			host, err)
 		return nil
 	}
+
+	tcpAddr := &net.TCPAddr{IP: net.ParseIP(host), Port: int(port)}
+	conn := NewConn(tcpAddr)
+	inventory := bmpeer.NewInventory(s.db)
+	sq := bmpeer.NewSendQueue(inventory)
+	logic := newPeerBase(tcpAddr, s, inventory, sq, false)
+
+	p := bmpeer.NewPeer(logic, conn, sq, persistent, retryCount)
+	
+	logic.addr = tcpAddr
+	logic.na = na
 
 	go func() {
-		if atomic.LoadInt32(&p.disconnect) != 0 {
-			return
-		}
-		if p.retryCount > 0 {
-			scaledInterval := connectionRetryInterval.Nanoseconds() * p.retryCount / 2
+		// Wait for some time if this is a retry, and wait longer if we have
+		// tried multiple times. 
+		// TODO: this seems like the wrong place to handle this. Shouldn't the 
+		// server manage which connections should be waited for? 
+		if retryCount > 0 {
+			scaledInterval := connectionRetryInterval.Nanoseconds() * retryCount / 2
 			scaledDuration := time.Duration(scaledInterval)
 			time.Sleep(scaledDuration)
 		}
-		conn, err := Dial("tcp", addr)
-		if err != nil {
-			p.server.donePeers <- p
+		
+		if p.Start() != nil {
 			return
 		}
 
-		// We may have slept and the server may have scheduled a shutdown. In that
-		// case ditch the peer immediately.
-		if atomic.LoadInt32(&p.disconnect) == 0 {
-			p.timeConnected = time.Now()
-			p.server.addrManager.Attempt(p.na)
-
-			// Connection was successful so log it and start peer.
-			p.conn = conn
-			atomic.AddInt32(&p.connected, 1)
-			p.Start()
-		}
+		s.addrManager.Attempt(na)
 	}()
 	return p
 }

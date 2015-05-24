@@ -24,7 +24,10 @@ import (
 // we have, which will be periodically sent to the peer in a series of inv
 // messages.
 type SendQueue interface {
+	// QueueMessage queues a message to be sent to the peer. 
 	QueueMessage(wire.Message) error
+	
+	// QueueDataRequest 
 	QueueDataRequest([]*wire.InvVect) error
 
 	// QueueInventory adds the passed inventory to the inventory send queue which
@@ -38,17 +41,21 @@ type SendQueue interface {
 	Stop()
 }
 
-//
+// sendQueue is an instance of SendQueue. 
 type sendQueue struct {
-	//maxQueueSize  uint32
 	trickleTime time.Duration
 
-	//
+	// Sends messages to the outHandler function. 
 	msgQueue      chan wire.Message
+	// Sends messages from the dataRequestHandler to the outHandler function.
 	dataQueue     chan wire.Message
+	// sends new inv data to be queued up and trickled to the other peer eventually. 
 	outputInvChan chan []*wire.InvVect
+	// 
 	requestQueue  chan []*wire.InvVect
+	// used to turn off the sendQueue
 	quit          chan struct{}
+	
 	resetWg       sync.WaitGroup
 	doneWg        sync.WaitGroup
 
@@ -118,6 +125,8 @@ func (sq *sendQueue) Start(conn Connection) {
 	go sq.outHandler()
 	go sq.queueHandler(time.NewTicker(sq.trickleTime))
 	go sq.dataRequestHandler()
+	
+	atomic.StoreInt32(&sq.stopped, 0)
 }
 
 func (sq *sendQueue) Running() bool {
@@ -125,10 +134,6 @@ func (sq *sendQueue) Running() bool {
 }
 
 func (sq *sendQueue) Stop() {
-	if !sq.Running() {
-		return
-	}
-
 	// Already stopping?
 	if atomic.AddInt32(&sq.stopped, 1) != 1 {
 		return
@@ -162,7 +167,6 @@ clean2:
 	}
 
 	atomic.StoreInt32(&sq.started, 0)
-	atomic.StoreInt32(&sq.stopped, 0)
 	sq.quit = make(chan struct{})
 	sq.resetWg.Done()
 }
@@ -288,5 +292,6 @@ func NewSendQueue(inventory *Inventory) SendQueue {
 		requestQueue:  make(chan []*wire.InvVect, outputBufferSize),
 		quit:          make(chan struct{}),
 		inventory:     inventory,
+		stopped:       1, 
 	}
 }
