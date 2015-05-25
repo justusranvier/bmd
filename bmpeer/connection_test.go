@@ -92,6 +92,10 @@ func (mc *MockConn) Read(b []byte) (int, error) {
 
 // Write allows the peer to write to the mock connection.
 func (mc *MockConn) Write(b []byte) (n int, err error) {
+	if mc.closed {
+		return 0, errors.New("Connection closed.")
+	}
+
 	data := make([]byte, len(b))
 	copy(data, b)
 	mc.sendChan <- data
@@ -143,50 +147,101 @@ func (mc *MockConn) MockWrite(msg wire.Message) {
 }
 
 // NewMockConn creates a new mockConn
-func NewMockConn(localAddr, remoteAddr net.Addr) *MockConn {
+func NewMockConn(localAddr, remoteAddr net.Addr, closed bool) *MockConn {
 	return &MockConn{
 		localAddr:   localAddr,
 		remoteAddr:  remoteAddr,
 		sendChan:    make(chan []byte),
 		receiveChan: make(chan []byte),
 		done:        make(chan struct{}),
+		closed:      closed, 
 	}
 }
 
 // dialNewMockConn is a function that can be swapped with the dial var for
 // testing purposes.
-func dialNewMockConn(localAddr net.Addr, fail bool) func(service, addr string) (net.Conn, error) {
+func dialNewMockConn(localAddr net.Addr, fail bool, closed bool) func(service, addr string) (net.Conn, error) {
 	return func(service, addr string) (net.Conn, error) {
 		if fail {
 			return nil, errors.New("Connection failed.")
 		}
 		host, portstr, _ := net.SplitHostPort(addr)
 		port, _ := strconv.ParseInt(portstr, 10, 0)
-		return NewMockConn(localAddr, &net.TCPAddr{IP: net.ParseIP(host), Port: int(port)}), nil
+		return NewMockConn(localAddr, &net.TCPAddr{IP: net.ParseIP(host), Port: int(port)}, closed), nil
 	}
 }
 
 func TestDial(t *testing.T) {
-	remoteAddr := "127.0.0.1:8333"
+	remoteAddr := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 8333}
 	localAddr := &net.TCPAddr{IP: net.ParseIP("192.168.0.1"), Port: 8333}
 
-	d := bmpeer.TstSwapDial(dialNewMockConn(localAddr, false))
+	d := bmpeer.TstSwapDial(dialNewMockConn(localAddr, false, false))
 	defer bmpeer.TstSwapDial(d)
 
-	conn, err := bmpeer.Dial("tcp", remoteAddr)
+	conn := bmpeer.NewConnection(remoteAddr)
 	if conn == nil {
 		t.Errorf("No connection returned.")
 	}
+	err := conn.Connect() 
 	if err != nil {
 		t.Errorf("Error %s returned.", err)
 	}
-
-	bmpeer.TstSwapDial(dialNewMockConn(localAddr, true))
-	conn, err = bmpeer.Dial("tcp", remoteAddr)
-	if conn != nil {
-		t.Errorf("Connection returned when it should have failed.")
+	err = conn.Connect() 
+	if err == nil {
+		t.Errorf("Expected error for trying to connect twice.")
 	}
+
+	bmpeer.TstSwapDial(dialNewMockConn(localAddr, true, false))
+	conn = bmpeer.NewConnection(remoteAddr)
+	err = conn.Connect() 
 	if err == nil {
 		t.Errorf("Error expected dialing failed connection.")
+	}
+}
+
+// This tests error cases that are returned for connections which have not
+// dialed in to the remote peer yet. 
+func TestUnconnectedConnection(t *testing.T) {
+	remoteAddr := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 8333}
+	localAddr := &net.TCPAddr{IP: net.ParseIP("192.168.0.1"), Port: 8333}
+
+	d := bmpeer.TstSwapDial(dialNewMockConn(localAddr, false, false))
+	defer bmpeer.TstSwapDial(d)
+
+	conn := bmpeer.NewConnection(remoteAddr)
+	if conn.RemoteAddr() != nil {
+		t.Error("There should be no remote addr before connecting.")
+	}
+	
+	msg, err := conn.ReadMessage()
+	if err == nil || msg != nil {
+		t.Error("It should be impossible to read messages before connection is established.")
+	}
+	
+	err = conn.WriteMessage(&wire.MsgVerAck{})
+	if err == nil {
+		t.Error("It should be impossible to write messages before connection is established.")
+	}
+}
+
+func TestInterruptedConnection(t *testing.T) {
+	remoteAddr := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 8333}
+	localAddr := &net.TCPAddr{IP: net.ParseIP("192.168.0.1"), Port: 8333}
+
+	d := bmpeer.TstSwapDial(dialNewMockConn(localAddr, false, true))
+	defer bmpeer.TstSwapDial(d)
+	
+	conn := bmpeer.NewConnection(remoteAddr)
+	conn.Connect() 
+	msg, err := conn.ReadMessage()
+	if err == nil || msg != nil {
+		t.Error("Connection should be closed.")
+	}
+	
+	conn = bmpeer.NewConnection(remoteAddr)
+	conn.Connect() 
+	err = conn.WriteMessage(&wire.MsgVerAck{})
+	if err == nil {
+		t.Error("Connection should be closed.")
 	}
 }

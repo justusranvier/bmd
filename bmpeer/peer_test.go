@@ -28,6 +28,7 @@ type MockLogic struct{
 	MessageHeard chan MessageType
 	failChan chan struct{}
 	failure bool
+	inbound bool
 }
 
 func (L *MockLogic) SetFailure(b bool) {
@@ -49,6 +50,18 @@ func (L *MockLogic) State() bmpeer.PeerState {
 
 func (L *MockLogic) ProtocolVersion() uint32 {
 	return 0
+}
+
+func (L *MockLogic) Addr() net.Addr {
+	return nil
+}
+
+func (L *MockLogic) NetAddress() *wire.NetAddress {
+	return nil
+}
+
+func (L *MockLogic) Inbound() bool {
+	return L.inbound
 }
 
 func (L *MockLogic) Report(mt MessageType) bool {
@@ -137,18 +150,125 @@ func (L *MockLogic) Running() bool {
 func (L *MockLogic) Stop() {}
 
 // NewMockLogic returns an instance of MockLogic
-func NewMockLogic() *MockLogic {
+func NewMockLogic(inbound bool) *MockLogic {
 	return &MockLogic {
 		MessageHeard: make(chan MessageType), 
 		failChan : make(chan struct{}), 
+		inbound: inbound, 
+	}
+}
+
+func TestPeerStartStop(t *testing.T) {
+	conn := NewMockConnection(true, false)
+	logic := NewMockLogic(false)
+	peer := bmpeer.NewPeer(logic, conn, logic, false, 0)
+	
+	peer.Disconnect()
+	if peer.Connected() {
+		t.Error("peer should not be running after being stopped before being started. ")
+	}
+
+	peer.Start()
+	if !peer.Connected() {
+		t.Error("peer should be running after being started. ")
+	}
+	peer.Start()
+	if !peer.Connected() {
+		t.Error("peer should still be running after being started twice in a row. ")
+	}
+
+	peer.Disconnect()
+	if peer.Connected() {
+		t.Error("peer should not be running after being stopped. ")
+	}
+	peer.Disconnect()
+	if peer.Connected() {
+		t.Error("peer should not be running after being stopped twice in a row. ")
+	}
+	
+	// Test the case in which Start and Stop end prematurely because they 
+	// are being called by another go routine. 
+	waitChan := make(chan struct{})
+	startChan := make(chan struct{})
+	stopChan := make(chan struct{})
+	go func () {
+		peer.TstStartWait(waitChan, startChan)
+		stopChan <- struct{}{}
+	} ()
+	// Make sure the queue is definitely in the middle of starting. 
+	<-startChan
+	peer.Start() 
+	waitChan <- struct{}{}
+	<-stopChan
+	if !peer.Connected() {
+		t.Error("peer should be running after being started twice at the same time. ")
+	}
+
+	go func () {
+		peer.TstDisconnectWait(waitChan, startChan)
+		stopChan <- struct{}{}
+	} ()
+	// Make sure the queue is in the process of stopping already. 
+	<-startChan
+	peer.Disconnect() 
+	waitChan <- struct{}{}
+	<-stopChan
+	if peer.Connected() {
+		t.Error("peer should not be running after being stopped twice at the same time. ")
+	}
+}
+
+func TestConnect(t *testing.T) {
+	conn := NewMockConnection(false, true)
+	logic := NewMockLogic(false)
+	peer := bmpeer.NewPeer(logic, conn, logic, false, 0)
+
+	err := 	peer.Start()
+	if err == nil {
+		t.Error("Should have failed to connect.")
+	}
+	
+	conn = NewMockConnection(true, false)
+	peer = bmpeer.NewPeer(logic, conn, logic, false, 0)
+	err = peer.Connect()
+	if err != nil {
+		t.Errorf("Connect returned error: %s", err)
+	}
+	
+	conn = NewMockConnection(false, false)
+	peer = bmpeer.NewPeer(logic, conn, logic, false, 0)
+	err = peer.Connect()
+	if err != nil {
+		t.Errorf("Connect returned error: %s", err)
+	}
+	
+	conn = NewMockConnection(true, false)
+	peer = bmpeer.NewPeer(logic, conn, logic, false, 0)
+
+	waitChan := make(chan struct{})
+	startChan := make(chan struct{})
+	stopChan := make(chan struct{})
+	peer.Start() 
+	
+	go func () {
+		peer.TstDisconnectWait(waitChan, startChan)
+		stopChan <- struct{}{}
+	} ()
+	// Make sure the queue is in the process of stopping already. 
+	<-startChan
+	err = peer.Connect() 
+	waitChan <- struct{}{}
+	<-stopChan
+	if err == nil {
+		t.Error("peer should have returned an error for trying to connect in the middle of a disconnect. ")
 	}
 }
 
 // TestPeer tests that every kind of message is routed correctly. 
 func TestPeer(t *testing.T) {
-	conn := NewMockConnection()
-	logic := NewMockLogic()
-	peer := bmpeer.TstNewPeer(logic, conn, logic)
+	conn := NewMockConnection(true, false)
+	logic := NewMockLogic(true)
+	peer := bmpeer.NewPeer(logic, conn, logic, false, 0)
 	
 	peer.Start()
 	
@@ -193,14 +313,18 @@ func TestPeer(t *testing.T) {
 		t.Error("Object message expected; got ", messageType)
 	}
 	
+	if peer.Logic() == nil {
+		t.Error("Peer's logic not returned.")
+	}
+	
 	peer.Disconnect() 
 }
 
 // TestPeerError tests error paths in the peer's inHandler function. 
 func TestPeerError(t *testing.T) {
-	conn := NewMockConnection()
-	logic := NewMockLogic()
-	peer := bmpeer.TstNewPeer(logic, conn, logic)
+	conn := NewMockConnection(true, false)
+	logic := NewMockLogic(true)
+	peer := bmpeer.NewPeer(logic, conn, logic, false, 0)
 	
 	peer.Start()
 	conn.SetFailure(true)
@@ -211,9 +335,24 @@ func TestPeerError(t *testing.T) {
 	}
 	conn.SetFailure(false)
 	
-	peer = bmpeer.TstNewPeer(logic, conn, logic)
+	peer = bmpeer.NewPeer(logic, conn, logic, false, 0)
 	peer.Start()
 	
 	logic.SetFailure(true)
 	conn.MockWrite(&wire.MsgVerAck{})
+}
+
+func TestTimeout(t *testing.T) {
+	conn := NewMockConnection(true, false)
+	logic := NewMockLogic(true)
+	peer := bmpeer.NewPeer(logic, conn, logic, false, 0)
+
+	peer.TstStart(1, 1)
+	if !peer.Connected() {
+		t.Fatal("Peer should have connected here.")
+	}
+	time.Sleep(2*time.Second)
+	if peer.Connected() {
+		t.Error("Peer should have disconnected.")
+	}
 }

@@ -4,6 +4,7 @@ import (
 	"sync/atomic"
 	"time"
 	"errors"
+	"sync"
 
 	"github.com/monetas/bmutil/wire"
 )
@@ -48,6 +49,7 @@ type Peer struct {
 
 	started    int32
 	disconnect int32 // only to be used atomically
+	lock       sync.Mutex
 
 	quit chan struct{}
 	
@@ -61,28 +63,43 @@ func (p *Peer) Logic() Logic {
 
 // Connected returns whether or not the peer is currently connected.
 func (p *Peer) Connected() bool {
-	return p.conn.Connected() && atomic.LoadInt32(&p.disconnect) == 0
+	return p.conn.Connected() &&
+		atomic.LoadInt32(&p.started) > 0 &&
+		atomic.LoadInt32(&p.disconnect) == 0
 }
 
 // Disconnect disconnects the peer by closing the connection. It also sets
 // a flag so the impending shutdown can be detected.
 func (p *Peer) Disconnect() {
-	// did we win the race?
+	p.lock.Lock()
+	defer p.lock.Unlock()
+
+	// Don't stop if we're not running.
+	if atomic.LoadInt32(&p.started) == 0 {
+		return
+	}
+	
+	// Already stopping? (shouldn't happen at all anymore.)
 	if atomic.AddInt32(&p.disconnect, 1) != 1 {
 		return
 	}
 
-	p.sendQueue.Stop()
 	close(p.quit)
 
 	if p.conn.Connected() {
 		p.conn.Close()
 	}
+
+	atomic.StoreInt32(&p.started, 0)
+	atomic.StoreInt32(&p.disconnect, 0)
 }
 
 // Start begins processing input and output messages. It also sends the initial
 // version message for outbound connections to start the negotiation process.
 func (p *Peer) Start() error {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+
 	// Already started?
 	if atomic.AddInt32(&p.started, 1) != 1 {
 		return nil
@@ -91,9 +108,12 @@ func (p *Peer) Start() error {
 	if !p.conn.Connected() {
 		err := p.Connect()
 		if err != nil {
+			atomic.StoreInt32(&p.started, 0)
 			return err
 		}
 	}
+	
+	p.quit = make(chan struct{})
 
 	p.sendQueue.Start(p.conn)
 
@@ -103,7 +123,7 @@ func (p *Peer) Start() error {
 	}
 
 	// Start processing input and output.
-	go p.inHandler()
+	go p.inHandler(negotiateTimeoutSeconds, idleTimeoutMinutes)
 	return nil
 }
 
@@ -126,11 +146,11 @@ func (p *Peer) Connect() error {
 
 // inHandler handles all incoming messages for the peer. It must be run as a
 // goroutine.
-func (p *Peer) inHandler() {
+func (p *Peer) inHandler(handshakeTimeoutSeconds, idleTimeoutMinutes uint) {
 	// peers must complete the initial version negotiation within a shorter
 	// timeframe than a general idle timeout. The timer is then reset below
 	// to idleTimeoutMinutes for all future messages.
-	idleTimer := time.AfterFunc(negotiateTimeoutSeconds*time.Second, func() {
+	idleTimer := time.AfterFunc(time.Duration(handshakeTimeoutSeconds)*time.Second, func() {
 		p.Disconnect()
 	})
 out:
@@ -174,9 +194,9 @@ out:
 		if err != nil {
 			break out
 		}
+		if markConnected == true { // XXX to make it compile
 
-		// reset the timer.
-		idleTimer.Reset(idleTimeoutMinutes * time.Minute)
+		}
 
 		// TODO
 		// Mark the address as currently connected and working as of
@@ -189,7 +209,8 @@ out:
 		//		}
 		// ok we got a message, reset the timer.
 		// timer just calls p.Disconnect() after logging.
-		idleTimer.Reset(idleTimeoutMinutes * time.Minute)
+		
+		idleTimer.Reset(time.Duration(idleTimeoutMinutes) * time.Minute)
 	}
 
 	idleTimer.Stop()
@@ -213,7 +234,6 @@ func NewPeer(logic Logic, conn Connection, sendQueue SendQueue, persistent bool,
 		logic:         logic,
 		sendQueue:     sendQueue,
 		conn:          conn,
-		quit:          make(chan struct{}),
 		Persistent:    persistent,
 		RetryCount:    retrys, 
 	}

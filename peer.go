@@ -82,19 +82,14 @@ var (
 // to push messages to the peer. Internally they use QueueMessage.
 type peer struct {
 	server            *server
+	bmpeer            *bmpeer.Peer
 	bmnet             wire.BitmessageNet
-	//started           int32
-	//connected         int32
-	//disconnect        int32 // only to be used atomically
-	//conn              bmpeer.Connection
 	sendQueue         bmpeer.SendQueue
 	inventory         *bmpeer.Inventory
 	addr              net.Addr
 	na                *wire.NetAddress
 	inbound           bool
-	//persistent        bool
 	knownAddresses    map[string]struct{}
-	//retryCount        int64
 	StatsMtx          sync.Mutex // protects all statistics below here.
 	versionKnown      bool
 	versionSent       bool
@@ -102,9 +97,6 @@ type peer struct {
 	handshakeComplete bool
 	protocolVersion   uint32
 	services          wire.ServiceFlag
-	//timeConnected     time.Time
-	//bytesReceived     uint64
-	//bytesSent         uint64
 	userAgent         string
 }
 
@@ -136,6 +128,10 @@ func (p *peer) NetAddress() *wire.NetAddress {
 
 func (p *peer) Inbound() bool {
 	return p.inbound
+}
+
+func (p *peer) Disconnect() {
+	p.bmpeer.Disconnect()
 }
 
 func (p *peer) State() bmpeer.PeerState {
@@ -181,7 +177,7 @@ func (p *peer) PushVersionMsg() {
 	msg.ProtocolVersion = maxProtocolVersion
 
 	p.QueueMessage(msg)
-	
+
 	p.versionSent = true
 }
 
@@ -199,17 +195,17 @@ func max(x, y int) int {
 
 func (p *peer) PushGetDataMsg(invVect []*wire.InvVect) {
 	ivl := p.inventory.FilterRequested(invVect)
-	
+
 	if len(ivl) == 0 {
 		return
 	}
 
 	x := 0
-	for len(ivl) - x > wire.MaxInvPerMsg {
-		p.QueueMessage(&wire.MsgInv{ivl[x:x+wire.MaxInvPerMsg]})
+	for len(ivl)-x > wire.MaxInvPerMsg {
+		p.QueueMessage(&wire.MsgInv{ivl[x : x+wire.MaxInvPerMsg]})
 		x += wire.MaxInvPerMsg
 	}
-	
+
 	p.QueueMessage(&wire.MsgGetData{ivl[x:]})
 }
 
@@ -217,11 +213,11 @@ func (p *peer) PushInvMsg(invVect []*wire.InvVect) {
 	ivl := p.inventory.FilterKnown(invVect)
 
 	x := 0
-	for len(ivl) - x > wire.MaxInvPerMsg {
-		p.QueueMessage(&wire.MsgInv{ivl[x:x+wire.MaxInvPerMsg]})
+	for len(ivl)-x > wire.MaxInvPerMsg {
+		p.QueueMessage(&wire.MsgInv{ivl[x : x+wire.MaxInvPerMsg]})
 		x += wire.MaxInvPerMsg
 	}
-	
+
 	if len(ivl) > 0 {
 		p.QueueMessage(&wire.MsgInv{ivl[x:]})
 	}
@@ -234,7 +230,7 @@ func (p *peer) PushObjectMsg(sha *wire.ShaHash) {
 	if err != nil {
 		return
 	}
-	
+
 	msg, err := wire.DecodeMsgObject(obj)
 	if err != nil {
 		return
@@ -311,12 +307,9 @@ func (p *peer) updateAddresses(msg *wire.MsgVersion) {
 	} else {
 		// A peer might not be advertising the same address that it
 		// actually connected from. One example of why this can happen
-		// is with NAT. Only add the address to the address manager if
-		// the addresses agree.
-		if addrmgr.NetAddressKey(msg.AddrMe) == addrmgr.NetAddressKey(p.na) {
-			p.server.addrManager.AddAddress(p.na, p.na)
-			p.server.addrManager.Good(p.na)
-		}
+		// is with NAT. Only add the actual address to the address manager.
+		p.server.addrManager.AddAddress(p.na, p.na)
+		p.server.addrManager.Good(p.na)
 	}
 }
 
@@ -339,7 +332,7 @@ func (p *peer) HandleVersionMsg(msg *wire.MsgVersion) error {
 		return errors.New("Only one version message allowed per peer.")
 	}
 	p.versionKnown = true
-	
+
 	// Set the supported services for the peer to what the remote peer
 	// advertised.
 	p.services = msg.Services
@@ -372,7 +365,7 @@ func (p *peer) HandleVersionMsg(msg *wire.MsgVersion) error {
 
 	// Update the address manager.
 	p.updateAddresses(msg)
-	
+
 	p.handleInitialConnection()
 	return nil
 }
@@ -382,7 +375,7 @@ func (p *peer) HandleVerAckMsg() error {
 	if !p.versionSent {
 		return errors.New("Version not yet received.")
 	}
-	
+
 	p.verAckReceived = true
 	p.handleInitialConnection()
 	return nil
@@ -396,18 +389,18 @@ func (p *peer) HandleInvMsg(msg *wire.MsgInv) error {
 	if !p.HandshakeComplete() {
 		return errors.New("Handshake not complete.")
 	}
-	
+
 	// Disconnect if the message is too big. 
-	if len(msg.InvList) > wire.MaxInvPerMsg || len(msg.InvList) == 0 {
-		return errors.New("Incorrect inv size.")
+	if len(msg.InvList) > wire.MaxInvPerMsg {
+		return errors.New("Inv too big.")
 	}
-	
-	// Add inv to known inventory. 
-	for _, invVect := range msg.InvList {
-		p.inventory.AddKnownInventory(invVect)
+
+	// Disconnect if the message is too big. 
+	if len(msg.InvList) == 0 {
+		return errors.New("Empty inv received.")
 	}
-	
- 	p.server.objectManager.QueueInv(msg, p)
+
+	p.server.objectManager.QueueInv(msg, p)
 	return nil
 }
 
@@ -427,17 +420,15 @@ func (p *peer) HandleGetDataMsg(msg *wire.MsgGetData) error {
 
 // 
 func (p *peer) HandleObjectMsg(msg wire.Message) error {
+	fmt.Println("handling object message", msg)
 	if !p.HandshakeComplete() {
 		return errors.New("Handshake not complete.")
 	}
-	
-	// TODO should we disconnect the peer if the object was not requested? 
-	// We don't remember everything that has been requested necessarily. 
 
 	p.inventory.DeleteRequest(&wire.InvVect{*wire.MessageHash(msg)})
-	
-	// Send the object to the object handler to be handled. 
-	p.server.objectManager.handleObjectMsg(msg)
+
+	p.server.objectManager.QueueObject(msg, p)
+
 	return nil
 }
 
@@ -523,8 +514,8 @@ func newPeerBase(addr net.Addr, s *server, inventory *bmpeer.Inventory, sendQueu
 // newInboundPeer returns a new inbound bitmessage peer for the provided server and
 // connection. Use Start to begin processing incoming and outgoing messages.
 func newInboundPeer(s *server, conn bmpeer.Connection) *bmpeer.Peer {
-	inventory := bmpeer.NewInventory(s.db)
-	sq := bmpeer.NewSendQueue(inventory)
+	inventory := bmpeer.NewInventory()
+	sq := bmpeer.NewSendQueue(inventory, s.db)
 	p := newPeerBase(conn.RemoteAddr(), s, inventory, sq, true)
 
 	return bmpeer.NewPeer(p, conn, sq, false, 0)
@@ -563,8 +554,8 @@ func newOutboundPeer(addr string, s *server, stream uint32, persistent bool, ret
 
 	tcpAddr := &net.TCPAddr{IP: net.ParseIP(host), Port: int(port)}
 	conn := NewConn(tcpAddr)
-	inventory := bmpeer.NewInventory(s.db)
-	sq := bmpeer.NewSendQueue(inventory)
+	inventory := bmpeer.NewInventory()
+	sq := bmpeer.NewSendQueue(inventory, s.db)
 	logic := newPeerBase(tcpAddr, s, inventory, sq, false)
 
 	p := bmpeer.NewPeer(logic, conn, sq, persistent, retryCount)

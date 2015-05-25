@@ -8,14 +8,15 @@
 package main
 
 import (
-	"container/list"
 	"crypto/rand"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"math"
 	"net"
+	"os/user"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -41,7 +42,10 @@ const (
 	MaxPeers    = 1000
 	BanDuration = 1000000
 	DefaultPort = 8444
-	DataDir     = "/home/jimmy/.bmd"
+
+	// DataDir specifies the path where bmd should store its data. $HOME would
+	// be replaced with the home directory of the user that runs bmd.
+	DataDir = "$HOME/.bmd"
 )
 
 // broadcastMsg provides the ability to house a bitcoin message to be broadcast
@@ -69,20 +73,20 @@ type relayMsg struct {
 // The peerState is used by the server to keep track of what the peers it is
 // connected to are up to.
 type peerState struct {
-	peers            *list.List
-	outboundPeers    *list.List
-	persistentPeers  *list.List
+	peers            map[*bmpeer.Peer]struct{}
+	outboundPeers    map[*bmpeer.Peer]struct{}
+	persistentPeers  map[*bmpeer.Peer]struct{}
 	banned           map[string]time.Time
 	outboundGroups   map[string]int
 	maxOutboundPeers int
 }
 
 func (p *peerState) Count() int {
-	return p.peers.Len() + p.outboundPeers.Len() + p.persistentPeers.Len()
+	return len(p.peers) + len(p.outboundPeers) + len(p.persistentPeers)
 }
 
 func (p *peerState) OutboundCount() int {
-	return p.outboundPeers.Len() + p.persistentPeers.Len()
+	return len(p.outboundPeers) + len(p.persistentPeers)
 }
 
 func (p *peerState) NeedMoreOutbound() bool {
@@ -91,30 +95,30 @@ func (p *peerState) NeedMoreOutbound() bool {
 }
 
 // forAllOutboundPeers is a helper function that runs closure on all outbound
-// peers known to peerState.
+// peers known to peerState
 func (p *peerState) forAllOutboundPeers(closure func(p *bmpeer.Peer)) {
-	for e := p.outboundPeers.Front(); e != nil; e = e.Next() {
-		closure(e.Value.(*bmpeer.Peer))
+	for e := range p.outboundPeers {
+		closure(e)
 	}
-	for e := p.persistentPeers.Front(); e != nil; e = e.Next() {
-		closure(e.Value.(*bmpeer.Peer))
+	for e := range p.persistentPeers {
+		closure(e)
 	}
 }
 
 // forAllPeers is a helper function that runs closure on all peers known to
 // peerState.
 func (p *peerState) forAllPeers(closure func(p *bmpeer.Peer)) {
-	for e := p.peers.Front(); e != nil; e = e.Next() {
-		closure(e.Value.(*bmpeer.Peer))
+	for e := range p.peers {
+		closure(e)
 	}
 	p.forAllOutboundPeers(closure)
 }
 
 func newPeerState(maxOutbound int) *peerState {
 	return &peerState{
-		peers:            list.New(),
-		persistentPeers:  list.New(),
-		outboundPeers:    list.New(),
+		peers:            make(map[*bmpeer.Peer]struct{}),
+		persistentPeers:  make(map[*bmpeer.Peer]struct{}),
+		outboundPeers:    make(map[*bmpeer.Peer]struct{}),
 		banned:           make(map[string]time.Time),
 		maxOutboundPeers: maxOutbound,
 		outboundGroups:   make(map[string]int),
@@ -142,26 +146,24 @@ var defaultPeers []*DefaultPeer = []*DefaultPeer{
 // server provides a bitmssage server for handling communications to and from
 // bitcoin peers.
 type server struct {
-	nonce                uint64
-	listeners            []bmpeer.Listener
-	started              int32      // atomic
-	shutdown             int32      // atomic
-	shutdownSched        int32      // atomic
-	bytesMutex           sync.Mutex // For the following two fields.
-	addrManager          *addrmgr.AddrManager
-	objectManager        *objectManager
-	state                *peerState
-	modifyRebroadcastInv chan interface{}
-	newPeers             chan *bmpeer.Peer
-	donePeers            chan *bmpeer.Peer
-	banPeers             chan *bmpeer.Peer
-	wakeup               chan struct{}
-	query                chan interface{}
-	relayInv             chan relayMsg
-	broadcast            chan broadcastMsg
-	wg                   sync.WaitGroup
-	quit                 chan struct{}
-	db		             database.Db
+	nonce         uint64
+	listeners     []bmpeer.Listener
+	started       int32 // atomic
+	shutdown      int32 // atomic
+	shutdownSched int32 // atomic
+	addrManager   *addrmgr.AddrManager
+	objectManager *objectManager
+	state         *peerState
+	newPeers      chan *bmpeer.Peer
+	donePeers     chan *bmpeer.Peer
+	banPeers      chan *bmpeer.Peer
+	wakeup        chan struct{}
+	query         chan interface{}
+	relayInv      chan relayMsg
+	broadcast     chan broadcastMsg
+	wg            sync.WaitGroup
+	quit          chan struct{}
+	db            database.Db
 }
 
 // randomUint16Number returns a random uint16 in a specified input range. Note
@@ -180,28 +182,6 @@ func randomUint16Number(max uint16) uint16 {
 			return (randomNumber % max)
 		}
 	}
-}
-
-// AddRebroadcastInventory adds 'iv' to the list of inventories to be
-// rebroadcasted at random intervals until they show up in a block.
-func (s *server) AddRebroadcastInventory(iv *wire.InvVect, data interface{}) {
-	// Ignore if shutting down.
-	if atomic.LoadInt32(&s.shutdown) != 0 {
-		return
-	}
-
-	s.modifyRebroadcastInv <- broadcastInventoryAdd{iv, data}
-}
-
-// RemoveRebroadcastInventory removes 'iv' from the list of items to be
-// rebroadcasted if present.
-func (s *server) RemoveRebroadcastInventory(iv *wire.InvVect) {
-	// Ignore if shutting down.
-	if atomic.LoadInt32(&s.shutdown) != 0 {
-		return
-	}
-
-	s.modifyRebroadcastInv <- broadcastInventoryDel(iv)
 }
 
 // handleAddPeerMsg deals with adding new peers. It is invoked from the
@@ -244,14 +224,14 @@ func (s *server) handleAddPeerMsg(p *bmpeer.Peer) bool {
 
 	// Add the new peer and start it.
 	if p.Logic().Inbound() {
-		s.state.peers.PushBack(p)
+		s.state.peers[p] = struct{}{}
 		p.Start()
 	} else {
 		s.state.outboundGroups[addrmgr.GroupKey(p.Logic().NetAddress())]++
 		if p.Persistent {
-			s.state.persistentPeers.PushBack(p)
+			s.state.persistentPeers[p] = struct{}{}
 		} else {
-			s.state.outboundPeers.PushBack(p)
+			s.state.outboundPeers[p] = struct{}{}
 		}
 	}
 
@@ -261,30 +241,31 @@ func (s *server) handleAddPeerMsg(p *bmpeer.Peer) bool {
 // handleDonePeerMsg deals with peers that have signalled they are done. It is
 // invoked from the peerHandler goroutine.
 func (s *server) handleDonePeerMsg(p *bmpeer.Peer) {
-	// TODO
-	/*var list *list.List
-	if p.persistent {
+	var list map[*bmpeer.Peer]struct{}
+	if p.Persistent {
 		list = s.state.persistentPeers
-	} else if p.inbound {
+	} else if p.Logic().Inbound() {
 		list = s.state.peers
 	} else {
 		list = s.state.outboundPeers
 	}
-	for e := list.Front(); e != nil; e = e.Next() {
-		if e.Value == p {
+	for e := range list {
+		if e == p {
 			// Issue an asynchronous reconnect if the peer was a
 			// persistent outbound connection.
-			if !p.inbound && p.persistent && atomic.LoadInt32(&s.shutdown) == 0 {
-				e.Value = newOutboundPeer(s, p.Addr(), true, p.retryCount+1, p.na.Stream)
+			if !p.Logic().Inbound() && p.Persistent && atomic.LoadInt32(&s.shutdown) == 0 {
+				// TODO handle the requirement to wait a certain amount of time. 
+				// TODO eventually we shouldn't work with addresses represented as strings at all. 
+				e = newOutboundPeer(p.Logic().Addr().String(), s, p.Logic().NetAddress().Stream, true, p.RetryCount+1)
 				return
 			}
-			if !p.inbound {
-				s.state.outboundGroups[addrmgr.GroupKey(p.na)]--
+			if !p.Logic().Inbound() {
+				s.state.outboundGroups[addrmgr.GroupKey(p.Logic().NetAddress())]--
 			}
-			list.Remove(e)
+			delete(list, e)
 			return
 		}
-	}*/
+	}
 	// If we get here it means that either we didn't know about the peer
 	// or we purposefully deleted it.
 }
@@ -353,7 +334,7 @@ type delNodeMsg struct {
 }
 
 type getAddedNodesMsg struct {
-	reply chan []*peer
+	reply chan []*bmpeer.Peer
 }
 
 // AddNewPeer adds an ip address to the peer handler and adds permanent connections
@@ -363,8 +344,7 @@ type getAddedNodesMsg struct {
 func (s *server) AddNewPeer(addr string, stream uint32, permanent bool) error {
 	// XXX(oga) duplicate oneshots?
 	if permanent {
-		for e := s.state.persistentPeers.Front(); e != nil; e = e.Next() {
-			peer := e.Value.(*bmpeer.Peer)
+		for peer := range s.state.persistentPeers {
 			if peer.Logic().Addr().String() == addr {
 				return errors.New("peer already connected")
 			}
@@ -396,15 +376,14 @@ func (s *server) handleQuery(querymsg interface{}) {
 
 	case delNodeMsg:
 		found := false
-		for e := s.state.persistentPeers.Front(); e != nil; e = e.Next() {
-			peer := e.Value.(*bmpeer.Peer)
+		for peer := range s.state.persistentPeers {
 			if peer.Logic().Addr().String() == msg.addr {
 				// Keep group counts ok since we remove from
 				// the list now.
 				s.state.outboundGroups[addrmgr.GroupKey(peer.Logic().NetAddress())]--
 				// This is ok because we are not continuing
 				// to iterate so won't corrupt the loop.
-				s.state.persistentPeers.Remove(e)
+				delete(s.state.persistentPeers, peer)
 				peer.Disconnect()
 				found = true
 				break
@@ -420,9 +399,8 @@ func (s *server) handleQuery(querymsg interface{}) {
 	// Request a list of the persistent (added) peers.
 	case getAddedNodesMsg:
 		// Respond with a slice of the relavent peers.
-		peers := make([]*peer, 0, s.state.persistentPeers.Len())
-		for e := s.state.persistentPeers.Front(); e != nil; e = e.Next() {
-			peer := e.Value.(*peer)
+		peers := make([]*bmpeer.Peer, 0, len(s.state.persistentPeers))
+		for peer := range s.state.persistentPeers {
 			peers = append(peers, peer)
 		}
 		msg.reply <- peers
@@ -510,7 +488,6 @@ func (s *server) peerHandler() {
 	// if nothing else happens, wake us up soon.
 	time.AfterFunc(10*time.Second, func() { s.wakeup <- struct{}{} })
 
-out:
 	for {
 		select {
 		// New peers connected to the server.
@@ -537,7 +514,7 @@ out:
 
 		// Used by timers below to wake us back up.
 		case <-s.wakeup:
-			// this page left intentionally blank
+			// left intentionally blank
 
 		case qmsg := <-s.query:
 			s.handleQuery(qmsg)
@@ -548,7 +525,10 @@ out:
 			s.state.forAllPeers(func(p *bmpeer.Peer) {
 				p.Disconnect()
 			})
-			break out
+			s.addrManager.Stop()
+			s.objectManager.Stop()
+			s.wg.Done()
+			return
 		}
 
 		// Only try connect to more peers if we actually need more.
@@ -561,8 +541,8 @@ out:
 			atomic.LoadInt32(&s.shutdown) == 0 {
 
 			nPeers := s.state.OutboundCount()
-			if nPeers > 8 {
-				nPeers = 8
+			if nPeers > MaxPeers {
+				nPeers = MaxPeers
 			}
 			addr := s.addrManager.GetAddress("any")
 			if addr == nil {
@@ -615,9 +595,6 @@ out:
 			})
 		}
 	}
-
-	s.addrManager.Stop()
-	s.wg.Done()
 }
 
 // BanPeer bans a peer that has already been connected to the server by ip.
@@ -651,8 +628,8 @@ func (s *server) ConnectedCount() int32 {
 
 // AddedNodeInfo returns an array of structures
 // describing the persistent (added) nodes.
-func (s *server) AddedNodeInfo() []*peer {
-	replyChan := make(chan []*peer)
+func (s *server) AddedNodeInfo() []*bmpeer.Peer {
+	replyChan := make(chan []*bmpeer.Peer)
 	s.query <- getAddedNodesMsg{reply: replyChan}
 	return <-replyChan
 }
@@ -683,64 +660,6 @@ func (s *server) RemoveAddr(addr string) error {
 func (s *server) NetTotals() (uint64, uint64) {
 	//TODO
 	return 0, 0
-}
-
-// rebroadcastHandler keeps track of user submitted inventories that we have
-// sent out but have not yet made it into a block. We periodically rebroadcast
-// them in case our peers restarted or otherwise lost track of them.
-func (s *server) rebroadcastHandler() {
-	// Wait 5 min before first tx rebroadcast.
-	timer := time.NewTimer(5 * time.Minute)
-	pendingInvs := make(map[wire.InvVect]interface{})
-
-out:
-	for {
-		select {
-		case riv := <-s.modifyRebroadcastInv:
-			switch msg := riv.(type) {
-			// Incoming InvVects are added to our map of RPC txs.
-			case broadcastInventoryAdd:
-				pendingInvs[*msg.invVect] = msg.data
-
-			// When an InvVect has been added to a block, we can
-			// now remove it, if it was present.
-			case broadcastInventoryDel:
-				if _, ok := pendingInvs[*msg]; ok {
-					delete(pendingInvs, *msg)
-				}
-			}
-
-		case <-timer.C:
-			// Any inventory we have has not made it into a block
-			// yet. We periodically resubmit them until they have.
-			for iv, data := range pendingInvs {
-				ivCopy := iv
-				s.RelayInventory(&ivCopy, data)
-			}
-
-			// Process at a random time up to 30mins (in seconds)
-			// in the future.
-			timer.Reset(time.Second *
-				time.Duration(randomUint16Number(1800)))
-
-		case <-s.quit:
-			break out
-		}
-	}
-
-	timer.Stop()
-
-	// Drain channels before exiting so nothing is left waiting around
-	// to send.
-cleanup:
-	for {
-		select {
-		case <-s.modifyRebroadcastInv:
-		default:
-			break cleanup
-		}
-	}
-	s.wg.Done()
 }
 
 // Start begins accepting connections from peers.
@@ -799,44 +718,6 @@ func (s *server) WaitForShutdown() {
 	s.wg.Wait()
 }
 
-// ScheduleShutdown schedules a server shutdown after the specified duration.
-// It also dynamically adjusts how often to warn the server is going down based
-// on remaining duration.
-func (s *server) ScheduleShutdown(duration time.Duration) {
-	// Don't schedule shutdown more than once.
-	if atomic.AddInt32(&s.shutdownSched, 1) != 1 {
-		return
-	}
-	go func() {
-		remaining := duration
-		tickDuration := dynamicTickDuration(remaining)
-		done := time.After(remaining)
-		ticker := time.NewTicker(tickDuration)
-	out:
-		for {
-			select {
-			case <-done:
-				ticker.Stop()
-				s.Stop()
-				break out
-			case <-ticker.C:
-				remaining = remaining - tickDuration
-				if remaining < time.Second {
-					continue
-				}
-
-				// Change tick duration dynamically based on remaining time.
-				newDuration := dynamicTickDuration(remaining)
-				if tickDuration != newDuration {
-					tickDuration = newDuration
-					ticker.Stop()
-					ticker = time.NewTicker(tickDuration)
-				}
-			}
-		}
-	}()
-}
-
 // parseListeners splits the list of listen addresses passed in addrs into
 // IPv4 and IPv6 slices and returns them. This allows easy creation of the
 // listeners on the correct interface "tcp4" and "tcp6". It also properly
@@ -882,17 +763,26 @@ func parseListeners(addrs []string) ([]string, []string, bool, error) {
 
 func NewServer(listenAddrs []string, db database.Db) (*server, error) {
 	return newServer(listenAddrs, db, bmpeer.Listen)
-} 
+}
 
 // newServer returns a new bmd server configured to listen on addr for the
 // bitmessage network. Use start to begin accepting connections from peers.
-func newServer(listenAddrs []string, db database.Db, listen func(string, string) (bmpeer.Listener, error)) (*server, error) {
+func newServer(listenAddrs []string, db database.Db,
+	listen func(string, string) (bmpeer.Listener, error)) (*server, error) {
+
 	nonce, err := wire.RandomUint64()
 	if err != nil {
 		return nil, err
 	}
 
-	amgr := addrmgr.New(DataDir, net.LookupIP)
+	// get data directory
+	user, err := user.Current()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get current user: %v", err)
+	}
+	dataDir := strings.Replace(DataDir, "$HOME", user.HomeDir, 1)
+
+	amgr := addrmgr.New(dataDir, net.LookupIP)
 
 	var listeners []bmpeer.Listener
 	ipv4Addrs, ipv6Addrs, wildcard, err := parseListeners(listenAddrs)
@@ -955,50 +845,21 @@ func newServer(listenAddrs []string, db database.Db, listen func(string, string)
 	}
 
 	s := server{
-		nonce:                nonce,
-		listeners:            listeners,
-		addrManager:          amgr,
-		state:                newPeerState(defaultMaxOutbound),
-		newPeers:             make(chan *bmpeer.Peer, MaxPeers),
-		donePeers:            make(chan *bmpeer.Peer, MaxPeers),
-		banPeers:             make(chan *bmpeer.Peer, MaxPeers),
-		wakeup:               make(chan struct{}),
-		query:                make(chan interface{}),
-		relayInv:             make(chan relayMsg, MaxPeers),
-		broadcast:            make(chan broadcastMsg, MaxPeers),
-		quit:                 make(chan struct{}),
-		modifyRebroadcastInv: make(chan interface{}),
-		objectManager:        &objectManager{
-			requestedObjects: make(map[wire.ShaHash]*peer),
-			msgChan:          make(chan interface{}),
-			quit:             make(chan struct{}),
-		},
-		db:                   db, 
+		nonce:       nonce,
+		listeners:   listeners,
+		addrManager: amgr,
+		state:       newPeerState(defaultMaxOutbound),
+		newPeers:    make(chan *bmpeer.Peer, MaxPeers),
+		donePeers:   make(chan *bmpeer.Peer, MaxPeers),
+		banPeers:    make(chan *bmpeer.Peer, MaxPeers),
+		wakeup:      make(chan struct{}),
+		query:       make(chan interface{}),
+		relayInv:    make(chan relayMsg, MaxPeers),
+		broadcast:   make(chan broadcastMsg, MaxPeers),
+		quit:        make(chan struct{}),
+		db:          db,
 	}
-	
-	s.objectManager.server = &s
+	s.objectManager = newObjectManager(&s)
 
 	return &s, nil
-}
-
-// dynamicTickDuration is a convenience function used to dynamically choose a
-// tick duration based on remaining time. It is primarily used during
-// server shutdown to make shutdown warnings more frequent as the shutdown time
-// approaches.
-func dynamicTickDuration(remaining time.Duration) time.Duration {
-	switch {
-	case remaining <= time.Second*5:
-		return time.Second
-	case remaining <= time.Second*15:
-		return time.Second * 5
-	case remaining <= time.Minute:
-		return time.Second * 15
-	case remaining <= time.Minute*5:
-		return time.Minute
-	case remaining <= time.Minute*15:
-		return time.Minute * 5
-	case remaining <= time.Hour:
-		return time.Minute * 15
-	}
-	return time.Hour
 }

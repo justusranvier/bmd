@@ -4,7 +4,7 @@
 
 package main
 
-import (	
+import (
 	"github.com/monetas/bmd/bmpeer"
 	"github.com/monetas/bmd/database"
 	"github.com/monetas/bmutil/wire"
@@ -31,9 +31,9 @@ func TstNewPeerHandshakeComplete(s *server, conn bmpeer.Connection, inventory *b
 		bmnet:           wire.MainNet,
 		services:        wire.SFNodeNetwork,
 		inbound:         true,
-		inventory:       inventory, 
-		sendQueue:       sq, 
-		addr:            conn.RemoteAddr(), 
+		inventory:       inventory,
+		sendQueue:       sq,
+		addr:            conn.RemoteAddr(),
 		versionSent:     true,
 		versionKnown:    true,
 		userAgent:       wire.DefaultUserAgent,

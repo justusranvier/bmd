@@ -17,9 +17,9 @@ type PeerState uint32
 //  - PeerStateHandshakeComplete: the peer has completed its handshake and
 //    is exchanging data.
 const (
-	PeerStateNew               PeerState = iota
-	PeerStateVersionKnown      PeerState = iota
-	PeerStateHandshakeComplete PeerState = iota
+	PeerStateNew PeerState = iota
+	PeerStateVersionKnown
+	PeerStateHandshakeComplete
 )
 
 // Logic is an interface that represents the behavior of a peer object

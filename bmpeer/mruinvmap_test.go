@@ -2,10 +2,20 @@ package bmpeer_test
 
 import (
 	"testing"
+	"math/rand"
 
 	"github.com/monetas/bmd/bmpeer"
 	"github.com/monetas/bmutil/wire"
 )
+
+func randomShaHash() *wire.ShaHash {
+	b := make([]byte, 32)
+	for i := 0; i < 32; i++ {
+		b[i] = byte(rand.Intn(256))
+	}
+	hash, _ := wire.NewShaHash(b)
+	return hash
+}
 
 func TestNew(t *testing.T) {
 	if bmpeer.NewMruInventoryMap(2) == nil {

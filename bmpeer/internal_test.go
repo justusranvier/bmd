@@ -8,6 +8,9 @@ import (
 	"net"
 	"sync/atomic"
 	"time"
+	
+	"github.com/monetas/bmd/database"
+	"github.com/monetas/bmutil/wire"
 )
 
 // TstNewConnection is used to create a new connection with a mock conn instead
@@ -28,15 +31,14 @@ func TstNewListener(netListen net.Listener) Listener {
 
 // TstNewPeer creates a new peer with a SendQueue as a parameter. This is for
 // mocking out the SendQueue for testing purposes. It comes out already connected. 
-func TstNewPeer(logic Logic, conn Connection, queue SendQueue) *Peer {
+/*func TstNewPeer(logic Logic, conn Connection, queue SendQueue) *Peer {
 	return &Peer{
 		logic:     logic,
 		sendQueue: queue,
 		conn:      conn,
 		quit:      make(chan struct{}),
-		connected: 1,
 	}
-}
+}*/
 
 // SwapDialDial swaps out the dialConnection function to mock it for testing
 // purposes. It returns the original function so that it can be swapped back in
@@ -54,6 +56,10 @@ func TstSwapListen(f func(string, string) (net.Listener, error)) func(string, st
 	g := listen
 	listen = f
 	return g
+}
+
+func TstRetrieveObject(db database.Db, inv *wire.InvVect) wire.Message {
+	return retrieveObject(db, inv)
 }
 
 // tstStart is a special way to start the SendQueue without starting the queue
@@ -166,24 +172,117 @@ func (sq *sendQueue) tstStartQueueHandler(trickleTicker *time.Ticker) {
 
 // TstStart runs tstStart on a SendQueue object, assuming it is an instance
 // of *sendQueue.
-func TstStart(sq SendQueue, conn Connection) {
+func TstSendQueueStart(sq SendQueue, conn Connection) {
 	sq.(*sendQueue).tstStart(conn)
 }
 
 // TstStartQueueHandler runs tstStartQueueHandler on a SendQueue object,
 // assuming it is an instance of *sendQueue.
-func TstStartQueueHandler(sq SendQueue, trickleTicker *time.Ticker) {
+func TstSendQueueStartQueueHandler(sq SendQueue, trickleTicker *time.Ticker) {
 	sq.(*sendQueue).tstStartQueueHandler(trickleTicker)
 }
 
 // TstStartWait runs tstStartWait on a SendQueue object assuming it is
 // an instance of *sendQueue
-func TstStartWait(sq SendQueue, conn Connection ,waitChan chan struct{}, startChan chan struct{}) {
+func TstSendQueueStartWait(sq SendQueue, conn Connection ,waitChan chan struct{}, startChan chan struct{}) {
 	sq.(*sendQueue).tstStartWait(conn, waitChan, startChan)
 }
 
 // TstStopWait runs tstStopWait on a SendQueue object assuming it is an
 // instance of *sendQueue
-func TstStopWait(sq SendQueue, waitChan chan struct{}, startChan chan struct{}) {
+func TstSendQueueStopWait(sq SendQueue, waitChan chan struct{}, startChan chan struct{}) {
 	sq.(*sendQueue).tstStopWait(waitChan, startChan)
+}
+
+//
+func (p *Peer) TstStartWait(waitChan chan struct{}, startChan chan struct{}) error {
+	// Already started?
+	if atomic.AddInt32(&p.started, 1) != 1 {
+		return nil
+	}
+	
+	// Signal that the function is in the middle of running.
+	startChan <- struct{}{}
+	// Wait for for a signal to continue. 
+	<- waitChan
+	
+	if !p.conn.Connected() {
+		err := p.Connect()
+		if err != nil {
+			return err
+		}
+	}
+
+	p.quit = make(chan struct{})
+
+	p.sendQueue.Start(p.conn)
+
+	// Send initial version message if necessary. 
+	if !p.logic.Inbound() {
+		p.logic.PushVersionMsg()
+	}
+
+	// Start processing input and output.
+	go p.inHandler(negotiateTimeoutSeconds, idleTimeoutMinutes)
+	return nil
+}
+
+func (p *Peer) TstDisconnectWait(waitChan chan struct{}, startChan chan struct{}) {
+	// Don't stop if we're not running.
+	if atomic.LoadInt32(&p.started) == 0 {
+		return
+	}
+
+	// did we win the race?
+	if atomic.AddInt32(&p.disconnect, 1) != 1 {
+		return
+	}
+
+	p.sendQueue.Stop()
+	close(p.quit)
+	// TODO remove peer from object manager
+
+	if p.conn.Connected() {
+		p.conn.Close()
+	}
+	
+	// Signal that the function is in the middle of running.
+	startChan <- struct{}{}
+	// Wait for for a signal to continue. 
+	<- waitChan
+	
+	atomic.StoreInt32(&p.started, 0)
+	atomic.StoreInt32(&p.disconnect, 0)
+}
+
+// 
+func (p *Peer) TstStart(negotiateTimeoutSeconds, idleTimeoutMinutes uint) error {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+
+	// Already started?
+	if atomic.AddInt32(&p.started, 1) != 1 {
+		return nil
+	}
+	
+	if !p.conn.Connected() {
+		err := p.Connect()
+		if err != nil {
+			atomic.StoreInt32(&p.started, 0)
+			return err
+		}
+	}
+	
+	p.quit = make(chan struct{})
+
+	p.sendQueue.Start(p.conn)
+
+	// Send initial version message if necessary. 
+	if !p.logic.Inbound() {
+		p.logic.PushVersionMsg()
+	}
+
+	// Start processing input and output.
+	go p.inHandler(negotiateTimeoutSeconds, idleTimeoutMinutes)
+	return nil
 }

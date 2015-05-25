@@ -82,7 +82,7 @@ func TestConnectionAndListener(t *testing.T) {
 		t.Errorf("Wrong local addr returned. Expected %s, got %s.", localAddr, listener.Addr())
 	}
 
-	mockConn := NewMockConn(localAddr, remoteAddr)
+	mockConn := NewMockConn(localAddr, remoteAddr, false)
 
 	message1 := wire.NewMsgUnknownObject(617, time.Now(), wire.ObjectType(5), 12, 1, []byte{87, 99, 23, 56})
 	message2 := wire.NewMsgUnknownObject(616, time.Now(), wire.ObjectType(5), 12, 1, []byte{22, 55, 89, 107})
@@ -102,10 +102,6 @@ func TestConnectionAndListener(t *testing.T) {
 		}
 		if mc2 != nil {
 			t.Errorf("Connection somehow returned?")
-		}
-
-		if mc.LocalAddr() != localAddr {
-			t.Errorf("Wrong local addr.")
 		}
 
 		if mc.RemoteAddr() != remoteAddr {

@@ -47,6 +47,11 @@ type connection struct {
 }
 
 func (pc *connection) WriteMessage(msg wire.Message) error {
+	// conn will be nill if the connection disconnected. 
+	if pc.conn == nil {
+		return errors.New("No connection established.")
+	}
+
 	// Write the message to the peer.
 	n, err := wire.WriteMessageN(pc.conn, msg, wire.MainNet)
 
@@ -64,6 +69,11 @@ func (pc *connection) WriteMessage(msg wire.Message) error {
 }
 
 func (pc *connection) ReadMessage() (wire.Message, error) {
+	// conn will be nill if the connection disconnected. 
+	if pc.conn == nil {
+		return nil, errors.New("No connection established.")
+	}
+	
 	n, msg, _, err := wire.ReadMessageN(pc.conn, wire.MainNet)
 
 	pc.mtx.Lock()
@@ -107,17 +117,6 @@ func (pc *connection) LastRead() time.Time {
 	return t
 }
 
-// LocalAddr returns the localAddr field of the fake connection and satisfies
-// the net.Conn interface.
-/*func (pc *connection) LocalAddr() net.Addr {
-	if pc.conn == nil {
-		return nil
-	}
-	return pc.conn.LocalAddr()
-}*/
-
-// RemoteAddr returns the remoteAddr field of the fake connection and satisfies
-// the net.Conn interface.
 func (pc *connection) RemoteAddr() net.Addr {
 	if pc.conn == nil {
 		return nil
@@ -155,6 +154,5 @@ func (pc *connection) Connect() error {
 func NewConnection(addr net.Addr) Connection {
 	return &connection{
 		addr: addr, 
-		timeConnected: time.Now(), 
 	}
 }

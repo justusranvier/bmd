@@ -7,7 +7,6 @@ package bmpeer_test
 import (
 	"bytes"
 	"errors"
-	"math/rand"
 	"net"
 	"sync"
 	"testing"
@@ -22,12 +21,14 @@ import (
 // MockConnection implements the Connection interface and is used to test
 // sendQueue without connecting to the real internet.
 type MockConnection struct {
-	closed   bool
-	failure  bool // When this is true, sending or receiving messages returns an error.
-	done     chan struct{}
-	failChan chan struct{}
-	reply    chan wire.Message
-	send     chan wire.Message
+	closed      bool // Whether the connection has been closed. 
+	connected   bool // Whether the connection is connected.
+	failure     bool // When this is true, sending or receiving messages returns an error.
+	connectFail bool // When this is true, the connection cannot connect.
+	done        chan struct{}
+	failChan    chan struct{}
+	reply       chan wire.Message
+	send        chan wire.Message
 }
 
 func (mock *MockConnection) WriteMessage(msg wire.Message) error {
@@ -103,11 +104,12 @@ func (mock *MockConnection) LocalAddr() net.Addr {
 	return nil
 }
 
-func (mock *MockConnection) Close() error {
+func (mock *MockConnection) Close() {
 	if mock.closed {
-		return nil
+		return
 	}
 	mock.closed = true
+	mock.connected = false
 	close(mock.done)
 
 	// Drain any incoming messages.
@@ -119,7 +121,17 @@ close:
 			break close
 		}
 	}
+}
 
+func (pc *MockConnection) Connected() bool {
+	return pc.connected
+}
+
+func (pc *MockConnection) Connect() error {
+	if pc.connectFail {
+		return errors.New("Connection set to fail.")
+	}
+	pc.connected = true
 	return nil
 }
 
@@ -143,12 +155,14 @@ func (mock *MockConnection) SetFailure(b bool) {
 	}
 }
 
-func NewMockConnection() *MockConnection {
+func NewMockConnection(connected bool, fails bool) *MockConnection {
 	return &MockConnection{
-		done:     make(chan struct{}),
-		reply:    make(chan wire.Message),
-		send:     make(chan wire.Message),
-		failChan: make(chan struct{}), 
+		done:        make(chan struct{}),
+		reply:       make(chan wire.Message),
+		send:        make(chan wire.Message),
+		failChan:    make(chan struct{}), 
+		connected:   connected, 
+		connectFail: fails, 
 	}
 }
 
@@ -251,11 +265,11 @@ func NewMockDb() *MockDb {
 	}
 }
 
-func TestStartStop(t *testing.T) {
-	conn := NewMockConnection()
+func TestSendQueueStartStop(t *testing.T) {
+	conn := NewMockConnection(true, false)
 	db := NewMockDb()
 
-	queue := bmpeer.NewSendQueue(bmpeer.NewInventory(db))
+	queue := bmpeer.NewSendQueue(bmpeer.NewInventory(), db)
 
 	if queue.Running() {
 		t.Errorf("queue should not be running yet. ")
@@ -280,7 +294,7 @@ func TestStartStop(t *testing.T) {
 	startChan := make(chan struct{})
 	stopChan := make(chan struct{})
 	go func () {
-		bmpeer.TstStartWait(queue, conn, waitChan, startChan)
+		bmpeer.TstSendQueueStartWait(queue, conn, waitChan, startChan)
 		stopChan <- struct{}{}
 	} ()
 	// Make sure the queue is definitely in the middle of starting. 
@@ -293,7 +307,7 @@ func TestStartStop(t *testing.T) {
 	}
 	
 	go func () {
-		bmpeer.TstStopWait(queue, waitChan, startChan)
+		bmpeer.TstSendQueueStopWait(queue, waitChan, startChan)
 		stopChan <- struct{}{}
 	} ()
 	// Make sure the queue is in the process of stopping already. 
@@ -307,11 +321,11 @@ func TestStartStop(t *testing.T) {
 }
 
 func TestSendMessage(t *testing.T) {
-	conn := NewMockConnection()
+	conn := NewMockConnection(true, false)
 	db := NewMockDb()
 	var err error
 
-	queue := bmpeer.NewSendQueue(bmpeer.NewInventory(db))
+	queue := bmpeer.NewSendQueue(bmpeer.NewInventory(), db)
 
 	message := &wire.MsgVerAck{}
 
@@ -385,11 +399,11 @@ func TestSendMessage(t *testing.T) {
 }
 
 func TestRequestData(t *testing.T) {
-	conn := NewMockConnection()
+	conn := NewMockConnection(true, false)
 	db := NewMockDb()
 	var err error
 
-	queue := bmpeer.NewSendQueue(bmpeer.NewInventory(db))
+	queue := bmpeer.NewSendQueue(bmpeer.NewInventory(), db)
 
 	message := wire.NewMsgUnknownObject(345, time.Now(), wire.ObjectType(4), 1, 1, []byte{77, 82, 53, 48, 96, 1})
 
@@ -519,26 +533,17 @@ func TestRequestData(t *testing.T) {
 	queue.Stop()
 }
 
-func randomShaHash() *wire.ShaHash {
-	b := make([]byte, 32)
-	for i := 0; i < 32; i++ {
-		b[i] = byte(rand.Intn(256))
-	}
-	hash, _ := wire.NewShaHash(b)
-	return hash
-}
-
 func TestQueueInv(t *testing.T) {
 	tickerChan := make(chan time.Time)
 
 	ticker := time.NewTicker(time.Hour)
 	ticker.C = tickerChan // Make the ticker into something I control.
 
-	conn := NewMockConnection()
+	conn := NewMockConnection(true, false)
 	db := NewMockDb()
 
 	var err error
-	queue := bmpeer.NewSendQueue(bmpeer.NewInventory(db))
+	queue := bmpeer.NewSendQueue(bmpeer.NewInventory(), db)
 
 	// The queue isn't running yet, so this should return an error.
 	err = queue.QueueInventory([]*wire.InvVect{&wire.InvVect{Hash: *randomShaHash()}})
@@ -556,16 +561,16 @@ func TestQueueInv(t *testing.T) {
 	}()
 
 	// Send a tick without any invs having been sent.
-	bmpeer.TstStart(queue, conn)
-	bmpeer.TstStartQueueHandler(queue, ticker)
-	// Time for the
+	bmpeer.TstSendQueueStart(queue, conn)
+	bmpeer.TstSendQueueStartQueueHandler(queue, ticker)
+	// Time for the send queue to get started.
 	time.Sleep(time.Millisecond * 50)
 	tickerChan <- time.Now()
 
 	queue.Stop()
-	bmpeer.TstStart(queue, conn)
+	bmpeer.TstSendQueueStart(queue, conn)
 	close(reset)
-	bmpeer.TstStartQueueHandler(queue, ticker)
+	bmpeer.TstSendQueueStartQueueHandler(queue, ticker)
 
 	// Send an inv and try to get an inv message.
 	inv := &wire.InvVect{Hash: *randomShaHash()}
@@ -588,7 +593,7 @@ func TestQueueInv(t *testing.T) {
 	}
 
 	queue.Stop()
-	bmpeer.TstStart(queue, conn)
+	bmpeer.TstSendQueueStart(queue, conn)
 
 	// Fill up the channel.
 	i := 0
@@ -611,11 +616,11 @@ func TestQueueInv(t *testing.T) {
 		t.Error("Should have got a queue full error.")
 	}
 
-	bmpeer.TstStartQueueHandler(queue, ticker)
+	bmpeer.TstSendQueueStartQueueHandler(queue, ticker)
 	queue.Stop()
 
-	bmpeer.TstStart(queue, conn)
-	bmpeer.TstStartQueueHandler(queue, ticker)
+	bmpeer.TstSendQueueStart(queue, conn)
+	bmpeer.TstSendQueueStartQueueHandler(queue, ticker)
 
 	for i = 0; i < 6; i++ {
 		invTrickleSize := 1200
@@ -640,6 +645,59 @@ func TestQueueInv(t *testing.T) {
 
 	queue.Stop()
 	close(reset)
-	bmpeer.TstStart(queue, conn)
+	
+	// Finally, test the line that drains invSendQueue if the program disconnects.
+	bmpeer.TstSendQueueStart(queue, conn)
+	bmpeer.TstSendQueueStartQueueHandler(queue, ticker)
+	
+	for i = 0; i < 6; i++ {
+		invTrickleSize := 1200
+		invList := make([]*wire.InvVect, invTrickleSize)
+		for j := 0; j < invTrickleSize; j++ {
+			invList[j] = &wire.InvVect{Hash: *randomShaHash()}
+		}
+		err = queue.QueueInventory(invList)
+	}
+	// Give the queue handler some time to run.
+	time.Sleep(time.Millisecond * 50)
 	queue.Stop()
+	
+	// Start and stop again to make sure the test doesn't end before the queue
+	// has shut down the last time. 
+	bmpeer.TstSendQueueStart(queue, conn)
+	queue.Stop()
+}
+
+func TestRetrieveObject(t *testing.T) {
+	db := NewMockDb()
+
+	// An object that is not in the database.
+	notThere := &wire.InvVect{Hash: *randomShaHash()}
+
+	// An invalid object that will be in the database (normally this should not happen).
+	badData := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 0}
+	hash, _ := wire.NewShaHash(bmutil.CalcInventoryHash(badData))
+	badInv := &wire.InvVect{Hash: *hash}
+	db.InsertObject(badData)
+
+	// A valid object that will be in the database.
+	message := wire.NewMsgUnknownObject(345, time.Now(), wire.ObjectType(4), 1, 1, []byte{77, 82, 53, 48, 96, 1})
+	goodData := wire.EncodeMessage(message)
+	goodInv := &wire.InvVect{Hash: *wire.MessageHash(message)}
+	db.InsertObject(goodData)
+
+	// Retrieve objects that are not in the database.
+	if bmpeer.TstRetrieveObject(db, notThere) != nil {
+		t.Error("Object returned that should not have been in the database.")
+	}
+
+	// Retrieve invalid objects from the database.
+	if bmpeer.TstRetrieveObject(db, badInv) != nil {
+		t.Error("Object returned that should have been detected to be invalid.")
+	}
+
+	// Retrieve good objects from the database.
+	if bmpeer.TstRetrieveObject(db, goodInv) == nil {
+		t.Error("No object returned.")
+	}
 }
