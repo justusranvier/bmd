@@ -43,18 +43,18 @@ type Db interface {
 
 	// FetchObjectByCounter returns the corresponding object based on the
 	// counter. Note that each object type has a different counter, with unknown
-	// object having none. Currently, the only objects to have counters are
-	// messages and broadcasts because they make little sense for anything else.
-	// Counters are meant for used as a convenience method for fetching new data
-	// from database since last check.
+	// objects being consolidated into one counter. Counters are meant for use
+	// as a convenience method for fetching new data from database since last
+	// check.
 	FetchObjectByCounter(wire.ObjectType, uint64) ([]byte, error)
 
-	// FetchObjectsFromCounter returns `count' objects which have a counter
-	// position starting from `counter'. It also returns the counter value of
-	// the last object. Objects are guaranteed to be returned in order of
-	// increasing counter.
+	// FetchObjectsFromCounter returns a map of `count' objects which have a
+	// counter position starting from `counter'. Key is the value of counter and
+	// value is a byte slice containing the object. It also returns the counter
+	// value of the last object, which could be useful for more queries to the
+	// function.
 	FetchObjectsFromCounter(objType wire.ObjectType, counter uint64,
-		count uint64) ([][]byte, uint64, error)
+		count uint64) (map[uint64][]byte, uint64, error)
 
 	// FetchIdentityByAddress returns identity.Public stored in the form
 	// of a PubKey message in the pubkey database.

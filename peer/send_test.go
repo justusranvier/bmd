@@ -199,7 +199,7 @@ func (db *MockDb) FetchObjectByCounter(wire.ObjectType, uint64) ([]byte, error) 
 }
 
 func (db *MockDb) FetchObjectsFromCounter(objType wire.ObjectType, counter uint64,
-	count uint64) ([][]byte, uint64, error) {
+	count uint64) (map[uint64][]byte, uint64, error) {
 	return nil, 0, nil
 }
 

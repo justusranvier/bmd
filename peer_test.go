@@ -758,7 +758,9 @@ func getMemDb(msgs []wire.Message) database.Db {
 	return db
 }
 
-var expires = time.Now().Add(10 * time.Minute)
+const expireSeconds = 2 * 60
+
+var expires = time.Now().Add(expireSeconds * time.Second)
 
 //var expired = time.Now().Add(-10 * time.Minute).Add(-3 * time.Hour)
 
@@ -836,6 +838,20 @@ var testObj = []wire.Message{
 	wire.NewMsgUnknownObject(987, expires, wire.ObjectType(4), 1, 1, []byte{1, 2, 3, 4, 5, 0, 6, 7, 8, 9, 100}),
 	wire.NewMsgUnknownObject(7288, expires, wire.ObjectType(5), 1, 1, []byte{0, 0, 0, 0, 1, 0, 0}),
 	wire.NewMsgUnknownObject(7288, expires, wire.ObjectType(5), 1, 1, []byte{0, 0, 0, 0, 0, 0, 0, 99, 98, 97}),
+}
+
+func init() {
+	// Calculate pow for object messages.
+	for i := 0; i < len(testObj); i++ {
+		b := wire.EncodeMessage(testObj[i])
+		section := b[8:]
+		hash := bmutil.Sha512(section)
+		nonce := pow.DoSequential(pow.CalculateTarget(uint64(len(section)),
+			expireSeconds, pow.DefaultNonceTrialsPerByte,
+			pow.DefaultExtraBytes), hash)
+		binary.BigEndian.PutUint64(b, nonce)
+		testObj[i], _ = wire.DecodeMsgObject(b)
+	}
 }
 
 // TestOutboundPeerHandshake tests the initial handshake for an outbound peer, ie,
@@ -1249,16 +1265,6 @@ func TestProcessInvAndObjectExchange(t *testing.T) {
 		tooLongInvVect[i] = &wire.InvVect{Hash: *randomShaHash()}
 	}
 	TooLongInv := &wire.MsgInv{InvList: tooLongInvVect}
-
-	// Calculate pow for object messages.
-	for i := 0; i < len(testObj); i++ {
-		b := wire.EncodeMessage(testObj[i])
-		section := b[8:]
-		hash := bmutil.Sha512(section)
-		nonce := pow.DoSequential(10000000000000, hash)
-		binary.BigEndian.PutUint64(b, nonce)
-		testObj[i], _ = wire.DecodeMsgObject(b)
-	}
 
 	tests := []struct {
 		peerDB    []wire.Message // The messages already in the peer's db.

@@ -133,6 +133,7 @@ type server struct {
 	wg            sync.WaitGroup
 	quit          chan struct{}
 	db            database.Db
+	rpcServer     *rpcServer
 }
 
 // randomUint16Number returns a random uint16 in a specified input range. Note
@@ -603,6 +604,12 @@ func (s *server) start(startPeers []*DefaultPeer) {
 	for _, dp := range startPeers {
 		s.AddNewPeer(dp.addr, dp.stream, dp.permanent)
 	}
+
+	// Start RPC server.
+	if !cfg.DisableRPC {
+		s.wg.Add(1)
+		s.rpcServer.Start()
+	}
 }
 
 // Stop gracefully shuts down the server by stopping and disconnecting all
@@ -617,6 +624,15 @@ func (s *server) Stop() error {
 	// listening is disabled.
 	for _, listener := range s.listeners {
 		err := listener.Close()
+		if err != nil {
+			return err
+		}
+	}
+
+	// Stop RPC server.
+	if !cfg.DisableRPC {
+		err := s.rpcServer.Stop()
+		s.wg.Done()
 		if err != nil {
 			return err
 		}
@@ -769,6 +785,13 @@ func newServer(listenAddrs []string, db database.Db,
 		db:          db,
 	}
 	s.objectManager = newObjectManager(&s)
+
+	if !cfg.DisableRPC {
+		s.rpcServer, err = newRPCServer(cfg.RPCListeners, &s)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	return &s, nil
 }
