@@ -2,13 +2,13 @@
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
-package bmpeer
+package peer
 
 import (
 	"net"
 	"sync/atomic"
 	"time"
-	
+
 	"github.com/monetas/bmd/database"
 	"github.com/monetas/bmutil/wire"
 )
@@ -29,17 +29,6 @@ func TstNewListener(netListen net.Listener) Listener {
 	}
 }
 
-// TstNewPeer creates a new peer with a SendQueue as a parameter. This is for
-// mocking out the SendQueue for testing purposes. It comes out already connected. 
-/*func TstNewPeer(logic Logic, conn Connection, queue SendQueue) *Peer {
-	return &Peer{
-		logic:     logic,
-		sendQueue: queue,
-		conn:      conn,
-		quit:      make(chan struct{}),
-	}
-}*/
-
 // SwapDialDial swaps out the dialConnection function to mock it for testing
 // purposes. It returns the original function so that it can be swapped back in
 // at the end of the test.
@@ -58,13 +47,14 @@ func TstSwapListen(f func(string, string) (net.Listener, error)) func(string, st
 	return g
 }
 
+// TstRetrieveObject exposes retrieveObject for testing purposes.
 func TstRetrieveObject(db database.Db, inv *wire.InvVect) wire.Message {
 	return retrieveObject(db, inv)
 }
 
-// tstStart is a special way to start the SendQueue without starting the queue
+// tstStart is a special way to start the Send without starting the queue
 // handler for testing purposes.
-func (sq *sendQueue) tstStart(conn Connection) {
+func (sq *send) tstStart(conn Connection) {
 	// Wait in case the object is resetting.
 	sq.resetWg.Wait()
 
@@ -81,14 +71,14 @@ func (sq *sendQueue) tstStart(conn Connection) {
 	// Start the three main go routines.
 	go sq.outHandler()
 	go sq.dataRequestHandler()
-	
+
 	atomic.StoreInt32(&sq.stopped, 0)
 }
 
 // tstStartWait waits for a message from the given channel in the middle of
 // the start function. The purpose is to engineer a situation in which Start
-// is called while the sendQueue is already started. 
-func (sq *sendQueue) tstStartWait(conn Connection, waitChan chan struct{}, startChan chan struct{}) {
+// is called while the send is already started.
+func (sq *send) tstStartWait(conn Connection, waitChan chan struct{}, startChan chan struct{}) {
 	// Wait in case the object is resetting.
 	sq.resetWg.Wait()
 
@@ -96,11 +86,11 @@ func (sq *sendQueue) tstStartWait(conn Connection, waitChan chan struct{}, start
 	if atomic.AddInt32(&sq.started, 1) != 1 {
 		return
 	}
-	
+
 	// Signal that the function is in the middle of running.
 	startChan <- struct{}{}
-	// Wait for for a signal to continue. 
-	<- waitChan
+	// Wait for for a signal to continue.
+	<-waitChan
 
 	// When all three go routines are done, the wait group will unlock.
 	sq.doneWg.Add(3)
@@ -108,25 +98,25 @@ func (sq *sendQueue) tstStartWait(conn Connection, waitChan chan struct{}, start
 
 	// Start the three main go routines.
 	go sq.outHandler()
-	go sq.queueHandler(time.NewTicker(sq.trickleTime))
+	go sq.queueHandler(time.NewTimer(sq.trickleTime))
 	go sq.dataRequestHandler()
-	
+
 	atomic.StoreInt32(&sq.stopped, 0)
 }
 
-// tstStopWait is the same as tstStartWait for stopping. 
-func (sq *sendQueue) tstStopWait(waitChan chan struct{}, startChan chan struct{}) {
+// tstStopWait is the same as tstStartWait for stopping.
+func (sq *send) tstStopWait(waitChan chan struct{}, startChan chan struct{}) {
 	// Already stopping?
 	if atomic.AddInt32(&sq.stopped, 1) != 1 {
 		return
 	}
 
 	sq.resetWg.Add(1)
-	
+
 	// Signal that the function is in the middle of running.
 	startChan <- struct{}{}
-	// Wait for for a signal to continue. 
-	<- waitChan
+	// Wait for for a signal to continue.
+	<-waitChan
 
 	close(sq.quit)
 
@@ -159,72 +149,39 @@ clean2:
 	sq.resetWg.Done()
 }
 
-// tstStartQueueHandler allows for starting the queue handler with a special
-// ticker for testing purposes.
-func (sq *sendQueue) tstStartQueueHandler(trickleTicker *time.Ticker) {
+// tstStartHandler allows for starting the queue handler with a special
+// timer for testing purposes.
+func (sq *send) tstStartQueueHandler(trickle *time.Timer) {
 	if !sq.Running() {
 		return
 	}
 
 	sq.doneWg.Add(1)
-	go sq.queueHandler(trickleTicker)
+	go sq.queueHandler(trickle)
 }
 
-// TstStart runs tstStart on a SendQueue object, assuming it is an instance
-// of *sendQueue.
-func TstSendQueueStart(sq SendQueue, conn Connection) {
-	sq.(*sendQueue).tstStart(conn)
+// TstSendStart runs tstStart on a Send object, assuming it is an instance
+// of *send.
+func TstSendStart(sq Send, conn Connection) {
+	sq.(*send).tstStart(conn)
 }
 
-// TstStartQueueHandler runs tstStartQueueHandler on a SendQueue object,
-// assuming it is an instance of *sendQueue.
-func TstSendQueueStartQueueHandler(sq SendQueue, trickleTicker *time.Ticker) {
-	sq.(*sendQueue).tstStartQueueHandler(trickleTicker)
+// TstSendStartQueueHandler runs tstStartQueueHandler on a Send object,
+// assuming it is an instance of *send.
+func TstSendStartQueueHandler(sq Send, trickle *time.Timer) {
+	sq.(*send).tstStartQueueHandler(trickle)
 }
 
-// TstStartWait runs tstStartWait on a SendQueue object assuming it is
-// an instance of *sendQueue
-func TstSendQueueStartWait(sq SendQueue, conn Connection ,waitChan chan struct{}, startChan chan struct{}) {
-	sq.(*sendQueue).tstStartWait(conn, waitChan, startChan)
+// TstStartWait runs tstStartWait on a Send object assuming it is
+// an instance of *send
+func TstSendStartWait(sq Send, conn Connection, waitChan chan struct{}, startChan chan struct{}) {
+	sq.(*send).tstStartWait(conn, waitChan, startChan)
 }
 
-// TstStopWait runs tstStopWait on a SendQueue object assuming it is an
-// instance of *sendQueue
-func TstSendQueueStopWait(sq SendQueue, waitChan chan struct{}, startChan chan struct{}) {
-	sq.(*sendQueue).tstStopWait(waitChan, startChan)
-}
-
-//
-func (p *Peer) TstStartWait(waitChan chan struct{}, startChan chan struct{}) error {
-	// Already started?
-	if atomic.AddInt32(&p.started, 1) != 1 {
-		return nil
-	}
-	
-	// Signal that the function is in the middle of running.
-	startChan <- struct{}{}
-	// Wait for for a signal to continue. 
-	<- waitChan
-	
-	if !p.conn.Connected() {
-		err := p.Connect()
-		if err != nil {
-			return err
-		}
-	}
-
-	p.quit = make(chan struct{})
-
-	p.sendQueue.Start(p.conn)
-
-	// Send initial version message if necessary. 
-	if !p.logic.Inbound() {
-		p.logic.PushVersionMsg()
-	}
-
-	// Start processing input and output.
-	go p.inHandler(negotiateTimeoutSeconds, idleTimeoutMinutes)
-	return nil
+// TstStopWait runs tstStopWait on a Send object assuming it is an
+// instance of *send
+func TstSendStopWait(sq Send, waitChan chan struct{}, startChan chan struct{}) {
+	sq.(*send).tstStopWait(waitChan, startChan)
 }
 
 func (p *Peer) TstDisconnectWait(waitChan chan struct{}, startChan chan struct{}) {
@@ -238,33 +195,30 @@ func (p *Peer) TstDisconnectWait(waitChan chan struct{}, startChan chan struct{}
 		return
 	}
 
-	p.sendQueue.Stop()
-	close(p.quit)
-	// TODO remove peer from object manager
+	p.send.Stop()
 
 	if p.conn.Connected() {
 		p.conn.Close()
 	}
-	
+	p.logic.Stop()
+
 	// Signal that the function is in the middle of running.
 	startChan <- struct{}{}
-	// Wait for for a signal to continue. 
-	<- waitChan
-	
+	// Wait for for a signal to continue.
+	<-waitChan
+
 	atomic.StoreInt32(&p.started, 0)
 	atomic.StoreInt32(&p.disconnect, 0)
 }
 
-// 
+//
 func (p *Peer) TstStart(negotiateTimeoutSeconds, idleTimeoutMinutes uint) error {
-	p.lock.Lock()
-	defer p.lock.Unlock()
 
 	// Already started?
 	if atomic.AddInt32(&p.started, 1) != 1 {
 		return nil
 	}
-	
+
 	if !p.conn.Connected() {
 		err := p.Connect()
 		if err != nil {
@@ -272,15 +226,9 @@ func (p *Peer) TstStart(negotiateTimeoutSeconds, idleTimeoutMinutes uint) error 
 			return err
 		}
 	}
-	
-	p.quit = make(chan struct{})
 
-	p.sendQueue.Start(p.conn)
-
-	// Send initial version message if necessary. 
-	if !p.logic.Inbound() {
-		p.logic.PushVersionMsg()
-	}
+	p.send.Start(p.conn)
+	p.logic.Start()
 
 	// Start processing input and output.
 	go p.inHandler(negotiateTimeoutSeconds, idleTimeoutMinutes)

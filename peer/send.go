@@ -5,11 +5,12 @@
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
-package bmpeer
+package peer
 
 import (
 	"container/list"
 	"errors"
+	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -24,17 +25,17 @@ const (
 	queueSize = 20
 )
 
-// SendQueue represents the part of a bitmessage peer that handles data
-// that is to be sent to the peer. It takes messages and sends them over
+// Send handles everything that is to be sent to the remote peer eventually.
+// It takes messages and sends them over
 // the outgoing connection, inventory vectors corresponding to objects that
 // the peer has requested, and inventory vectors representing objects that
 // we have, which will be periodically sent to the peer in a series of inv
 // messages.
-type SendQueue interface {
-	// QueueMessage queues a message to be sent to the peer. 
+type Send interface {
+	// QueueMessage queues a message to be sent to the peer.
 	QueueMessage(wire.Message) error
-	
-	// QueueDataRequest 
+
+	// QueueDataRequest
 	QueueDataRequest([]*wire.InvVect) error
 
 	// QueueInventory adds the passed inventory to the inventory send queue which
@@ -48,23 +49,23 @@ type SendQueue interface {
 	Stop()
 }
 
-// sendQueue is an instance of SendQueue. 
-type sendQueue struct {
+// send is an instance of Send.
+type send struct {
 	trickleTime time.Duration
 
-	// Sends messages to the outHandler function. 
-	msgQueue      chan wire.Message
+	// Sends messages to the outHandler function.
+	msgQueue chan wire.Message
 	// Sends messages from the dataRequestHandler to the outHandler function.
-	dataQueue     chan wire.Message
-	// sends new inv data to be queued up and trickled to the other peer eventually. 
+	dataQueue chan wire.Message
+	// sends new inv data to be queued up and trickled to the other peer eventually.
 	outputInvChan chan []*wire.InvVect
-	// 
-	requestQueue  chan []*wire.InvVect
-	// used to turn off the sendQueue
-	quit          chan struct{}
-	
-	resetWg       sync.WaitGroup
-	doneWg        sync.WaitGroup
+	//
+	requestQueue chan []*wire.InvVect
+	// used to turn off the send
+	quit chan struct{}
+
+	resetWg sync.WaitGroup
+	doneWg  sync.WaitGroup
 
 	// An internet connection to another bitmessage node.
 	conn Connection
@@ -78,89 +79,100 @@ type sendQueue struct {
 	stopped int32
 }
 
-func (sq *sendQueue) QueueMessage(msg wire.Message) error {
-	if !sq.Running() {
+// QueueMessage queues up a message to be sent to the remote peer as soon as
+// the connection is ready.
+func (send *send) QueueMessage(msg wire.Message) error {
+	if !send.Running() {
 		return errors.New("Not running.")
 	}
 
 	select {
-	case sq.msgQueue <- msg:
+	case send.msgQueue <- msg:
 		return nil
 	default:
 		return errors.New("Message queue full.")
 	}
 }
 
-func (sq *sendQueue) QueueDataRequest(inv []*wire.InvVect) error {
-	if !sq.Running() {
+// QueueDataRequest queues a list of invs whose corresponding objects
+// are to be sent to the remote peer eventually. send will ensure that
+// not too many objects are loaded in memory at a time.
+func (send *send) QueueDataRequest(inv []*wire.InvVect) error {
+	if !send.Running() {
 		return errors.New("Not running.")
 	}
 
 	select {
-	case sq.requestQueue <- inv:
+	case send.requestQueue <- inv:
 		return nil
 	default:
 		return errors.New("Data request queue full.")
 	}
 }
 
-func (sq *sendQueue) QueueInventory(inv []*wire.InvVect) error {
-	if !sq.Running() {
+// QueueInventory queues new inventory to be trickled periodically
+// to the remote peer at randomized time intervals.
+func (send *send) QueueInventory(inv []*wire.InvVect) error {
+	if !send.Running() {
 		return errors.New("Not running.")
 	}
 
 	select {
-	case sq.outputInvChan <- inv:
+	case send.outputInvChan <- inv:
 		return nil
 	default:
 		return errors.New("Inventory queue full.")
 	}
 }
 
-func (sq *sendQueue) Start(conn Connection) {
+// Start starts the send with a new connection.
+func (send *send) Start(conn Connection) {
 	// Wait in case the object is resetting.
-	sq.resetWg.Wait()
+	send.resetWg.Wait()
 
 	// Already starting?
-	if atomic.AddInt32(&sq.started, 1) != 1 {
+	if atomic.AddInt32(&send.started, 1) != 1 {
 		return
 	}
 
 	// When all three go routines are done, the wait group will unlock.
-	sq.doneWg.Add(3)
-	sq.conn = conn
+	send.doneWg.Add(3)
+	send.conn = conn
 
 	// Start the three main go routines.
-	go sq.outHandler()
-	go sq.queueHandler(time.NewTicker(sq.trickleTime))
-	go sq.dataRequestHandler()
-	
-	atomic.StoreInt32(&sq.stopped, 0)
+	go send.outHandler()
+	go send.queueHandler(time.NewTimer(send.trickleTime))
+	go send.dataRequestHandler()
+
+	atomic.StoreInt32(&send.stopped, 0)
 }
 
-func (sq *sendQueue) Running() bool {
-	return atomic.LoadInt32(&sq.started) > 0 && atomic.LoadInt32(&sq.stopped) == 0
+// Running returns whether the send queue is running.
+func (send *send) Running() bool {
+	return atomic.LoadInt32(&send.started) > 0 &&
+		atomic.LoadInt32(&send.stopped) == 0
 }
 
-func (sq *sendQueue) Stop() {
+// Stop stops the send struct.
+func (send *send) Stop() {
 	// Already stopping?
-	if atomic.AddInt32(&sq.stopped, 1) != 1 {
+	if atomic.AddInt32(&send.stopped, 1) != 1 {
 		return
 	}
 
-	sq.resetWg.Add(1)
+	send.resetWg.Add(1)
 
-	close(sq.quit)
+	close(send.quit)
 
 	// Wait for the other goroutines to finish.
-	sq.doneWg.Wait()
+	send.doneWg.Wait()
 
 	// Drain channels to ensure that no other go routine remains locked.
 clean1:
 	for {
 		select {
-		case <-sq.requestQueue:
-		case <-sq.outputInvChan:
+		case <-send.requestQueue:
+		case <-send.outputInvChan:
 		default:
 			break clean1
 		}
@@ -168,61 +180,64 @@ clean1:
 clean2:
 	for {
 		select {
-		case <-sq.msgQueue:
-		case <-sq.dataQueue:
+		case <-send.msgQueue:
+		case <-send.dataQueue:
 		default:
 			break clean2
 		}
 	}
 
-	atomic.StoreInt32(&sq.started, 0)
-	sq.quit = make(chan struct{})
-	sq.resetWg.Done()
+	atomic.StoreInt32(&send.started, 0)
+	send.quit = make(chan struct{})
+	send.resetWg.Done()
 }
 
-// Must be run as a go routine.
-func (sq *sendQueue) dataRequestHandler() {
+// dataRequestHandler handles getData requests without using up too much
+// memory. Must be run as a go routine.
+func (send *send) dataRequestHandler() {
 out:
 	for {
 		select {
-		case <-sq.quit:
+		case <-send.quit:
 			break out
-		case invList := <-sq.requestQueue:
+		case invList := <-send.requestQueue:
 			for _, inv := range invList {
-				msg := retrieveObject(sq.db, inv)
+				msg := retrieveObject(send.db, inv)
 				if msg != nil {
-					sq.dataQueue <- msg
+					send.dataQueue <- msg
 				}
 			}
 		}
 	}
 
-	sq.doneWg.Done()
+	send.doneWg.Done()
 }
 
 // queueHandler handles the queueing of outgoing data for the peer. This runs
 // as a muxer for various sources of input so we can ensure that objectmanager
 // and the server goroutine both will not block on us sending a message.
 // We then pass the data on to outHandler to be actually written.
-func (sq *sendQueue) queueHandler(trickleTicker *time.Ticker) {
+func (send *send) queueHandler(trickle *time.Timer) {
+	defer trickle.Stop()
+
+	randTime := rand.New(rand.NewSource(10))
 	invSendQueue := list.New()
-	defer trickleTicker.Stop()
 
 out:
 	for {
 		select {
 
-		case <-sq.quit:
+		case <-send.quit:
 			break out
 
-		case iv := <-sq.outputInvChan:
+		case iv := <-send.outputInvChan:
 			invSendQueue.PushBack(iv)
 
-		case <-trickleTicker.C:
+		case <-trickle.C:
 			// Don't send anything if we're disconnecting or there
 			// is no queued inventory.
 			// version is known if send queue has any entries.
-			if !sq.Running() || invSendQueue.Len() == 0 {
+			if !send.Running() || invSendQueue.Len() == 0 {
 				continue
 			}
 
@@ -230,20 +245,23 @@ out:
 			// drain the inventory send queue.
 			invMsg := wire.NewMsgInv()
 			for e := invSendQueue.Front(); e != nil; e = invSendQueue.Front() {
-				ivl := sq.inventory.FilterKnown(invSendQueue.Remove(e).([]*wire.InvVect))
+				ivl := send.inventory.FilterKnown(invSendQueue.Remove(e).([]*wire.InvVect))
 
 				for _, iv := range ivl {
 					invMsg.AddInvVect(iv)
 					if len(invMsg.InvList) >= maxInvTrickleSize {
-						sq.msgQueue <- invMsg
+						send.msgQueue <- invMsg
 						invMsg = wire.NewMsgInv()
 					}
 				}
 
 			}
 			if len(invMsg.InvList) > 0 {
-				sq.msgQueue <- invMsg
+				send.msgQueue <- invMsg
 			}
+
+			// Randomize the number of seconds from 4 to 16 minutes.
+			trickle.Reset(time.Duration(240000 + randTime.Int63n(720000)))
 		}
 	}
 
@@ -253,46 +271,46 @@ out:
 		invSendQueue.Remove(e)
 	}
 
-	sq.doneWg.Done()
+	send.doneWg.Done()
 }
 
 // outHandler handles all outgoing messages for the peer. It must be run as a
 // goroutine. It uses a buffered channel to serialize output messages while
 // allowing the sender to continue running asynchronously.
-func (sq *sendQueue) outHandler() {
+func (send *send) outHandler() {
 out:
 	for {
 		var msg wire.Message
 
 		select {
-		case <-sq.quit:
+		case <-send.quit:
 			break out
 		// The regular message queue is drained first so that don't clog up the
 		// connection with tons of object messages.
-		case msg = <-sq.msgQueue:
-		case msg = <-sq.dataQueue:
+		case msg = <-send.msgQueue:
+		case msg = <-send.dataQueue:
 		}
 
 		if msg != nil {
-			err := sq.conn.WriteMessage(msg)
+			err := send.conn.WriteMessage(msg)
 			if err != nil {
-				sq.doneWg.Done()
+				send.doneWg.Done()
 				// Run in a separate go routine because otherwise outHandler
 				// would never quit.
 				go func() {
-					sq.Stop()
+					send.Stop()
 				}()
 				return
 			}
 		}
 	}
 
-	sq.doneWg.Done()
+	send.doneWg.Done()
 }
 
-// NewSendQueue returns a new sendQueue object.
-func NewSendQueue(inventory *Inventory, db database.Db) SendQueue {
-	return &sendQueue{
+// NewSend returns a new sendQueue object.
+func NewSend(inventory *Inventory, db database.Db) Send {
+	return &send{
 		trickleTime:   time.Second * 10,
 		msgQueue:      make(chan wire.Message, queueSize),
 		dataQueue:     make(chan wire.Message, queueSize),
@@ -300,8 +318,8 @@ func NewSendQueue(inventory *Inventory, db database.Db) SendQueue {
 		requestQueue:  make(chan []*wire.InvVect, outputBufferSize),
 		quit:          make(chan struct{}),
 		inventory:     inventory,
-		db:            db, 
-		stopped:       1, 
+		db:            db,
+		stopped:       1,
 	}
 }
 

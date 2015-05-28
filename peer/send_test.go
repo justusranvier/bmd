@@ -2,7 +2,7 @@
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
-package bmpeer_test
+package peer_test
 
 import (
 	"bytes"
@@ -12,16 +12,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monetas/bmd/bmpeer"
+	"github.com/monetas/bmd/peer"
 	"github.com/monetas/bmutil"
 	"github.com/monetas/bmutil/identity"
 	"github.com/monetas/bmutil/wire"
 )
 
 // MockConnection implements the Connection interface and is used to test
-// sendQueue without connecting to the real internet.
+// send without connecting to the real internet.
 type MockConnection struct {
-	closed      bool // Whether the connection has been closed. 
+	closed      bool // Whether the connection has been closed.
 	connected   bool // Whether the connection is connected.
 	failure     bool // When this is true, sending or receiving messages returns an error.
 	connectFail bool // When this is true, the connection cannot connect.
@@ -69,9 +69,9 @@ func (mock *MockConnection) ReadMessage() (wire.Message, error) {
 	}
 
 	select {
-	case msg := <-mock.send :
+	case msg := <-mock.send:
 		return msg, nil
-	case <-mock.failChan :
+	case <-mock.failChan:
 		return nil, errors.New("Mock Connection set to fail.")
 	}
 }
@@ -145,11 +145,11 @@ func (mock *MockConnection) SetFailure(b bool) {
 		case <-mock.done:
 		default:
 		}
-		
-		// Close the failure channel to ensure any messages being read 
+
+		// Close the failure channel to ensure any messages being read
 		// will return an error.
 		close(mock.failChan)
-		
+
 	} else {
 		mock.failChan = make(chan struct{})
 	}
@@ -160,9 +160,9 @@ func NewMockConnection(connected bool, fails bool) *MockConnection {
 		done:        make(chan struct{}),
 		reply:       make(chan wire.Message),
 		send:        make(chan wire.Message),
-		failChan:    make(chan struct{}), 
-		connected:   connected, 
-		connectFail: fails, 
+		failChan:    make(chan struct{}),
+		connected:   connected,
+		connectFail: fails,
 	}
 }
 
@@ -265,11 +265,11 @@ func NewMockDb() *MockDb {
 	}
 }
 
-func TestSendQueueStartStop(t *testing.T) {
+func TestSendStartStop(t *testing.T) {
 	conn := NewMockConnection(true, false)
 	db := NewMockDb()
 
-	queue := bmpeer.NewSendQueue(bmpeer.NewInventory(), db)
+	queue := peer.NewSend(peer.NewInventory(), db)
 
 	if queue.Running() {
 		t.Errorf("queue should not be running yet. ")
@@ -287,32 +287,32 @@ func TestSendQueueStartStop(t *testing.T) {
 	if queue.Running() {
 		t.Errorf("queue should not be running anymore. ")
 	}
-	
-	// Test the case in which Start and Stop end prematurely because they 
-	// are being called by another go routine. 
+
+	// Test the case in which Start and Stop end prematurely because they
+	// are being called by another go routine.
 	waitChan := make(chan struct{})
 	startChan := make(chan struct{})
 	stopChan := make(chan struct{})
-	go func () {
-		bmpeer.TstSendQueueStartWait(queue, conn, waitChan, startChan)
+	go func() {
+		peer.TstSendStartWait(queue, conn, waitChan, startChan)
 		stopChan <- struct{}{}
-	} ()
-	// Make sure the queue is definitely in the middle of starting. 
+	}()
+	// Make sure the queue is definitely in the middle of starting.
 	<-startChan
-	queue.Start(conn) 
+	queue.Start(conn)
 	waitChan <- struct{}{}
 	<-stopChan
 	if !queue.Running() {
 		t.Errorf("queue should be running after being started twice. ")
 	}
-	
-	go func () {
-		bmpeer.TstSendQueueStopWait(queue, waitChan, startChan)
+
+	go func() {
+		peer.TstSendStopWait(queue, waitChan, startChan)
 		stopChan <- struct{}{}
-	} ()
-	// Make sure the queue is in the process of stopping already. 
+	}()
+	// Make sure the queue is in the process of stopping already.
 	<-startChan
-	queue.Stop() 
+	queue.Stop()
 	waitChan <- struct{}{}
 	<-stopChan
 	if queue.Running() {
@@ -325,11 +325,11 @@ func TestSendMessage(t *testing.T) {
 	db := NewMockDb()
 	var err error
 
-	queue := bmpeer.NewSendQueue(bmpeer.NewInventory(), db)
+	queue := peer.NewSend(peer.NewInventory(), db)
 
 	message := &wire.MsgVerAck{}
 
-	// Try sending a message to a sendQueue that is not running yet.
+	// Try sending a message to a send that is not running yet.
 	// This should return an error.
 	err = queue.QueueMessage(message)
 	if err == nil {
@@ -348,7 +348,7 @@ func TestSendMessage(t *testing.T) {
 		t.Errorf("Different message received somehow.")
 	}
 
-	// Now test that the sendQueue shuts down if the connection fails.
+	// Now test that the send shuts down if the connection fails.
 	conn.SetFailure(true)
 	message = &wire.MsgVerAck{}
 	err = queue.QueueMessage(message)
@@ -403,7 +403,7 @@ func TestRequestData(t *testing.T) {
 	db := NewMockDb()
 	var err error
 
-	queue := bmpeer.NewSendQueue(bmpeer.NewInventory(), db)
+	queue := peer.NewSend(peer.NewInventory(), db)
 
 	message := wire.NewMsgUnknownObject(345, time.Now(), wire.ObjectType(4), 1, 1, []byte{77, 82, 53, 48, 96, 1})
 
@@ -440,7 +440,7 @@ func TestRequestData(t *testing.T) {
 	queue.QueueDataRequest(badHashes)
 
 	queue.QueueDataRequest(hashes)
-	// Force the sendQueue to manage all queued requests.
+	// Force the send to manage all queued requests.
 	sentData = wire.EncodeMessage(conn.MockRead(nil))
 	if !bytes.Equal(data, sentData) {
 		t.Errorf("Wrong message returned.")
@@ -534,16 +534,16 @@ func TestRequestData(t *testing.T) {
 }
 
 func TestQueueInv(t *testing.T) {
-	tickerChan := make(chan time.Time)
+	timerChan := make(chan time.Time)
 
-	ticker := time.NewTicker(time.Hour)
-	ticker.C = tickerChan // Make the ticker into something I control.
+	timer := time.NewTimer(time.Hour)
+	timer.C = timerChan // Make the ticker into something I control.
 
 	conn := NewMockConnection(true, false)
 	db := NewMockDb()
 
 	var err error
-	queue := bmpeer.NewSendQueue(bmpeer.NewInventory(), db)
+	queue := peer.NewSend(peer.NewInventory(), db)
 
 	// The queue isn't running yet, so this should return an error.
 	err = queue.QueueInventory([]*wire.InvVect{&wire.InvVect{Hash: *randomShaHash()}})
@@ -561,16 +561,16 @@ func TestQueueInv(t *testing.T) {
 	}()
 
 	// Send a tick without any invs having been sent.
-	bmpeer.TstSendQueueStart(queue, conn)
-	bmpeer.TstSendQueueStartQueueHandler(queue, ticker)
+	peer.TstSendStart(queue, conn)
+	peer.TstSendStartQueueHandler(queue, timer)
 	// Time for the send queue to get started.
 	time.Sleep(time.Millisecond * 50)
-	tickerChan <- time.Now()
+	timerChan <- time.Now()
 
 	queue.Stop()
-	bmpeer.TstSendQueueStart(queue, conn)
+	peer.TstSendStart(queue, conn)
 	close(reset)
-	bmpeer.TstSendQueueStartQueueHandler(queue, ticker)
+	peer.TstSendStartQueueHandler(queue, timer)
 
 	// Send an inv and try to get an inv message.
 	inv := &wire.InvVect{Hash: *randomShaHash()}
@@ -579,7 +579,7 @@ func TestQueueInv(t *testing.T) {
 	// and queues it up and that there will be something to read when
 	// we call MockRead.
 	time.Sleep(time.Millisecond * 50)
-	tickerChan <- time.Now()
+	timerChan <- time.Now()
 	msg := conn.MockRead(nil)
 
 	switch msg.(type) {
@@ -593,7 +593,7 @@ func TestQueueInv(t *testing.T) {
 	}
 
 	queue.Stop()
-	bmpeer.TstSendQueueStart(queue, conn)
+	peer.TstSendStart(queue, conn)
 
 	// Fill up the channel.
 	i := 0
@@ -616,11 +616,11 @@ func TestQueueInv(t *testing.T) {
 		t.Error("Should have got a queue full error.")
 	}
 
-	bmpeer.TstSendQueueStartQueueHandler(queue, ticker)
+	peer.TstSendStartQueueHandler(queue, timer)
 	queue.Stop()
 
-	bmpeer.TstSendQueueStart(queue, conn)
-	bmpeer.TstSendQueueStartQueueHandler(queue, ticker)
+	peer.TstSendStart(queue, conn)
+	peer.TstSendStartQueueHandler(queue, timer)
 
 	for i = 0; i < 6; i++ {
 		invTrickleSize := 1200
@@ -633,23 +633,23 @@ func TestQueueInv(t *testing.T) {
 	// Give the queue handler some time to run.
 	time.Sleep(time.Millisecond * 50)
 
-	// Now drain the SendQueue of all messages.
+	// Now drain the Send of all messages.
 	reset = make(chan struct{})
 	go func() {
 		for conn.MockRead(reset) != nil {
 		}
 	}()
 
-	tickerChan <- time.Now()
+	timerChan <- time.Now()
 	time.Sleep(time.Millisecond * 50)
 
 	queue.Stop()
 	close(reset)
-	
+
 	// Finally, test the line that drains invSendQueue if the program disconnects.
-	bmpeer.TstSendQueueStart(queue, conn)
-	bmpeer.TstSendQueueStartQueueHandler(queue, ticker)
-	
+	peer.TstSendStart(queue, conn)
+	peer.TstSendStartQueueHandler(queue, timer)
+
 	for i = 0; i < 6; i++ {
 		invTrickleSize := 1200
 		invList := make([]*wire.InvVect, invTrickleSize)
@@ -661,10 +661,10 @@ func TestQueueInv(t *testing.T) {
 	// Give the queue handler some time to run.
 	time.Sleep(time.Millisecond * 50)
 	queue.Stop()
-	
+
 	// Start and stop again to make sure the test doesn't end before the queue
-	// has shut down the last time. 
-	bmpeer.TstSendQueueStart(queue, conn)
+	// has shut down the last time.
+	peer.TstSendStart(queue, conn)
 	queue.Stop()
 }
 
@@ -687,17 +687,17 @@ func TestRetrieveObject(t *testing.T) {
 	db.InsertObject(goodData)
 
 	// Retrieve objects that are not in the database.
-	if bmpeer.TstRetrieveObject(db, notThere) != nil {
+	if peer.TstRetrieveObject(db, notThere) != nil {
 		t.Error("Object returned that should not have been in the database.")
 	}
 
 	// Retrieve invalid objects from the database.
-	if bmpeer.TstRetrieveObject(db, badInv) != nil {
+	if peer.TstRetrieveObject(db, badInv) != nil {
 		t.Error("Object returned that should have been detected to be invalid.")
 	}
 
 	// Retrieve good objects from the database.
-	if bmpeer.TstRetrieveObject(db, goodInv) == nil {
+	if peer.TstRetrieveObject(db, goodInv) == nil {
 		t.Error("No object returned.")
 	}
 }
