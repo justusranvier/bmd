@@ -11,7 +11,6 @@ import (
 // Logic is an interface that represents the behavior of a peer object
 // excluding the parts that must be continually running.
 type Logic interface {
-	//State() PeerState
 	ProtocolVersion() uint32
 
 	HandleVersionMsg(*wire.MsgVersion) error

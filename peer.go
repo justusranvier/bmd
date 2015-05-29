@@ -145,6 +145,7 @@ func (p *bmpeer) PushVersionMsg() {
 	p.versionSent = true
 }
 
+// PushVerAckMsg sends a ver ack to the remote peer.
 func (p *bmpeer) PushVerAckMsg() {
 	p.QueueMessage(&wire.MsgVerAck{})
 }
@@ -170,7 +171,7 @@ func (p *bmpeer) PushGetDataMsg(invVect []*wire.InvVect) {
 		x += wire.MaxInvPerMsg
 	}
 
-	if len(ivl) - x > 0 {
+	if len(ivl)-x > 0 {
 		p.QueueMessage(&wire.MsgGetData{InvList: ivl[x:]})
 	}
 }
@@ -185,7 +186,7 @@ func (p *bmpeer) PushInvMsg(invVect []*wire.InvVect) {
 		x += wire.MaxInvPerMsg
 	}
 
-	if len(ivl) - x > 0 {
+	if len(ivl)-x > 0 {
 		p.QueueMessage(&wire.MsgInv{InvList: ivl[x:]})
 	}
 }
@@ -248,6 +249,7 @@ func (p *bmpeer) PushAddrMsg(addresses []*wire.NetAddress) error {
 	return errors.New("No addresses added.")
 }
 
+// QueueMessage takes a message and sends it to the remote peer.
 func (p *bmpeer) QueueMessage(msg wire.Message) {
 	p.send.QueueMessage(msg)
 }
@@ -338,7 +340,7 @@ func (p *bmpeer) HandleVersionMsg(msg *wire.MsgVersion) error {
 }
 
 // HandleVerAckMsg disconnects if the VerAck was received at the wrong time
-// and otherwise updates the peer's state. 
+// and otherwise updates the peer's state.
 func (p *bmpeer) HandleVerAckMsg() error {
 	// If no version message has been sent disconnect.
 	if !p.versionSent {
@@ -390,7 +392,8 @@ func (p *bmpeer) HandleGetDataMsg(msg *wire.MsgGetData) error {
 	return nil
 }
 
-//
+// HandleObjectMsg updates the peer's request list and sends the object to
+// the object manager.
 func (p *bmpeer) HandleObjectMsg(msg wire.Message) error {
 	if !p.HandshakeComplete() {
 		return errors.New("Handshake not complete.")

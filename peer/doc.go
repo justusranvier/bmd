@@ -14,7 +14,7 @@ Listener listens for incoming tcp connections and creates Connection objects
 for them when a connection is opened.
 
 Send manages everything that is to be sent to the remote peer eventually. Data
-requests, inv trickles, and other messages. 
+requests, inv trickles, and other messages.
 
 Peer manages the peer object overall and routes incoming messages.
 
