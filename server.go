@@ -15,6 +15,7 @@ import (
 	"math"
 	"net"
 	"runtime"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -699,7 +700,10 @@ func newServer(listenAddrs []string, db database.Db,
 
 	// TODO(oga) nonstandard port...
 	if wildcard {
-		port := /*cfg.DefaultPort*/ 8444
+		port, err := strconv.ParseUint(defaultPort, 10, 16)
+		if err != nil {
+			panic("incorrect config") // shouldn't happen ever
+		}
 		addrs, _ := net.InterfaceAddrs()
 		for _, a := range addrs {
 			ip, _, err := net.ParseCIDR(a.String())
