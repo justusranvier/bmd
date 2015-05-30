@@ -254,32 +254,13 @@ func (p *bmpeer) QueueMessage(msg wire.Message) {
 	p.send.QueueMessage(msg)
 }
 
-// updateAddresses potentially adds addresses to the address manager and
-// requests known addresses from the remote peer depending on whether the peer
-// is an inbound or outbound peer and other factors such as address routability
-// and the negotiated protocol version.
-func (p *bmpeer) updateAddresses(msg *wire.MsgVersion) {
-	// Outbound connections.
-	// TODO figure out how to refactor this.
-	if !p.inbound {
-		// TODO(davec): Only do this if not doing the initial block
-		// download and the local address is routable.
-		// Get address that best matches.
-		lna := p.server.addrManager.GetBestLocalAddress(p.na)
-		if addrmgr.IsRoutable(lna) {
-			addresses := []*wire.NetAddress{lna}
-			p.PushAddrMsg(addresses)
-		}
-
-		// Mark the address as a known good address.
-		p.server.addrManager.Good(p.na)
-	} else {
-		// A peer might not be advertising the same address that it
-		// actually connected from. One example of why this can happen
-		// is with NAT. Only add the actual address to the address manager.
-		p.server.addrManager.AddAddress(p.na, p.na)
-		p.server.addrManager.Good(p.na)
-	}
+// updateAddresses adds the remote address of the peer to the address manager.
+func (p *bmpeer) updateAddresses() {
+	// A peer might not be advertising the same address that it
+	// actually connected from. One example of why this can happen
+	// is with NAT. Only add the actual address to the address manager.
+	p.server.addrManager.AddAddress(p.na, p.na)
+	p.server.addrManager.Good(p.na)
 }
 
 // HandleVersionMsg is invoked when a peer receives a version bitmessage message
@@ -332,7 +313,7 @@ func (p *bmpeer) HandleVersionMsg(msg *wire.MsgVersion) error {
 	p.QueueMessage(wire.NewMsgVerAck())
 
 	// Update the address manager.
-	p.updateAddresses(msg)
+	p.updateAddresses()
 
 	p.server.addrManager.Connected(p.na)
 	p.handleInitialConnection()

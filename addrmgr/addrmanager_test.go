@@ -252,7 +252,7 @@ func TestAddAddressByIP(t *testing.T) {
 		},
 	}
 
-	amgr := addrmgr.New("", nil)
+	amgr := addrmgr.New("testaddressbyip", nil)
 	for i, test := range tests {
 		err := amgr.AddAddressByIP(test.addrIP)
 		if test.err != nil && err == nil {
@@ -308,7 +308,7 @@ func TestAddLocalAddress(t *testing.T) {
 			true,
 		},
 	}
-	amgr := addrmgr.New("", nil)
+	amgr := addrmgr.New("testaddlocaladdress", nil)
 	for x, test := range tests {
 		result := amgr.AddLocalAddress(&test.address, test.priority)
 		if result == nil && !test.valid {
@@ -716,7 +716,7 @@ func TestGetBestLocalAddress(t *testing.T) {
 		*/
 	}
 
-	amgr := addrmgr.New("", nil)
+	amgr := addrmgr.New("testgetbestlocaladdress", nil)
 
 	// Test against default when there's no address
 	for x, test := range tests {
