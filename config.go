@@ -37,6 +37,8 @@ const (
 	defaultDbType         = "memdb"
 	defaultPort           = "8444"
 	defaultRPCPort        = "8442"
+	defaultMaxUpPerPeer   = 2
+	defaultMaxDownPerPeer = 2
 )
 
 var (
@@ -88,6 +90,8 @@ type config struct {
 	CPUProfile     string        `long:"cpuprofile" description:"Write CPU profile to the specified file"`
 	DebugLevel     string        `short:"d" long:"debuglevel" description:"Logging level for all subsystems {trace, debug, info, warn, error, critical} -- You may also specify <subsystem>=<level>,<subsystem2>=<level>,... to set the log level for individual subsystems -- Use show to list available subsystems"`
 	Upnp           bool          `long:"upnp" description:"Use UPnP to map our listening port outside of NAT"`
+	MaxUpPerPeer   float64       `long:"maxuploadperpeer" description: "Maximum upload rate for any peer."`
+	MaxDownPerPeer float64       `lost:"maxdownloadperpeer" description: "Maximum download rate for any peer."`
 	onionlookup    func(string) ([]net.IP, error)
 	lookup         func(string) ([]net.IP, error)
 	oniondial      func(string, string) (net.Conn, error)
@@ -267,16 +271,18 @@ func newConfigParser(cfg *config, options flags.Options) *flags.Parser {
 func loadConfig() (*config, []string, error) {
 	// Default config.
 	cfg := config{
-		ConfigFile:    defaultConfigFile,
-		DebugLevel:    defaultLogLevel,
-		MaxPeers:      defaultMaxPeers,
-		BanDuration:   defaultBanDuration,
-		RPCMaxClients: defaultMaxRPCClients,
-		DataDir:       defaultDataDir,
-		LogDir:        defaultLogDir,
-		DbType:        defaultDbType,
-		RPCKey:        defaultRPCKeyFile,
-		RPCCert:       defaultRPCCertFile,
+		ConfigFile:     defaultConfigFile,
+		DebugLevel:     defaultLogLevel,
+		MaxPeers:       defaultMaxPeers,
+		BanDuration:    defaultBanDuration,
+		RPCMaxClients:  defaultMaxRPCClients,
+		DataDir:        defaultDataDir,
+		LogDir:         defaultLogDir,
+		DbType:         defaultDbType,
+		RPCKey:         defaultRPCKeyFile,
+		RPCCert:        defaultRPCCertFile,
+		MaxDownPerPeer: defaultMaxDownPerPeer,
+		MaxUpPerPeer:   defaultMaxUpPerPeer,
 	}
 
 	// Pre-parse the command line options to see if an alternative config
