@@ -12,6 +12,7 @@ import (
 // excluding the parts that must be continually running.
 type Logic interface {
 	ProtocolVersion() uint32
+	Stop()
 
 	HandleVersionMsg(*wire.MsgVersion) error
 	HandleVerAckMsg() error

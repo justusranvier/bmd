@@ -46,7 +46,12 @@ func (L *MockLogic) SetFailure(b bool) {
 }
 
 func (L *MockLogic) Listen() MessageType {
-	return <-L.MessageHeard
+	select {
+	case m := <-L.MessageHeard:
+		return m
+	case <-L.FailChan:
+		return MessageTypeNone
+	}
 }
 
 func (L *MockLogic) ProtocolVersion() uint32 {
@@ -195,7 +200,7 @@ func NewPeerTestProbe(inbound bool) *PeerTestProbe {
 }
 
 func TestPeerStartStop(t *testing.T) {
-	conn := NewMockConnection(true, false)
+	conn := NewMockConnection(mockAddr, true, false)
 	probe := NewPeerTestProbe(false)
 	logic := probe.Logic
 	send := probe.Send
@@ -226,7 +231,7 @@ func TestPeerStartStop(t *testing.T) {
 }
 
 func TestConnect(t *testing.T) {
-	conn := NewMockConnection(false, true)
+	conn := NewMockConnection(mockAddr, false, true)
 	probe := NewPeerTestProbe(false)
 	logic := probe.Logic
 	send := probe.Send
@@ -237,21 +242,21 @@ func TestConnect(t *testing.T) {
 		t.Error("Should have failed to connect.")
 	}
 
-	conn = NewMockConnection(true, false)
+	conn = NewMockConnection(mockAddr, true, false)
 	Peer = peer.NewPeer(logic, conn, send)
 	err = Peer.Connect()
 	if err != nil {
 		t.Errorf("Connect returned error: %s", err)
 	}
 
-	conn = NewMockConnection(false, false)
+	conn = NewMockConnection(mockAddr, false, false)
 	Peer = peer.NewPeer(logic, conn, send)
 	err = Peer.Connect()
 	if err != nil {
 		t.Errorf("Connect returned error: %s", err)
 	}
 
-	conn = NewMockConnection(true, false)
+	conn = NewMockConnection(mockAddr, true, false)
 	Peer = peer.NewPeer(logic, conn, send)
 
 	waitChan := make(chan struct{})
@@ -275,7 +280,7 @@ func TestConnect(t *testing.T) {
 
 // TestPeer tests that every kind of message is routed correctly.
 func TestPeer(t *testing.T) {
-	conn := NewMockConnection(true, false)
+	conn := NewMockConnection(mockAddr, true, false)
 	probe := NewPeerTestProbe(true)
 	logic := probe.Logic
 	send := probe.Send
@@ -329,7 +334,7 @@ func TestPeer(t *testing.T) {
 
 // TestPeerError tests error paths in the peer's inHandler function.
 func TestPeerError(t *testing.T) {
-	conn := NewMockConnection(true, false)
+	conn := NewMockConnection(mockAddr, true, false)
 	probe := NewPeerTestProbe(true)
 	logic := probe.Logic
 	send := probe.Send
@@ -339,8 +344,8 @@ func TestPeerError(t *testing.T) {
 	conn.SetFailure(true)
 	time.Sleep(time.Millisecond * 50)
 
-	if Peer.Connected() {
-		t.Error("Peer should have disconnected.")
+	if !Peer.Connected() {
+		t.Error("Peer should ignore messages it does not understand.")
 	}
 	conn.SetFailure(false)
 
@@ -352,7 +357,7 @@ func TestPeerError(t *testing.T) {
 }
 
 func TestTimeout(t *testing.T) {
-	conn := NewMockConnection(true, false)
+	conn := NewMockConnection(mockAddr, true, false)
 	probe := NewPeerTestProbe(true)
 	logic := probe.Logic
 	send := probe.Send

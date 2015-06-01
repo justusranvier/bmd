@@ -889,6 +889,7 @@ func TestOutboundPeerHandshake(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Config failed to load.")
 	}
+	cfg.MaxPeers = 1
 	defer backendLog.Flush()
 
 	for testCase, response := range responses {
@@ -995,6 +996,7 @@ func TestInboundPeerHandshake(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Config failed to load.")
 	}
+	cfg.MaxPeers = 1
 	defer backendLog.Flush()
 
 	for testCase, open := range openingMsg {
@@ -1098,6 +1100,7 @@ func TestProcessAddr(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Config failed to load.")
 	}
+	cfg.MaxPeers = 1
 	defer backendLog.Flush()
 
 	for testCase, addrTest := range AddrTests {
@@ -1121,10 +1124,12 @@ func TestProcessAddr(t *testing.T) {
 		}
 		serv.addrManager.AddAddresses(addrs, srcAddr)
 
-		incoming <- NewMockConnection(localAddr, remoteAddr, report,
+		mockConn := NewMockConnection(localAddr, remoteAddr, report,
 			NewInboundHandshakePeerTester(
 				&PeerAction{Messages: []wire.Message{wire.NewMsgVersion(addrin, addrout, nonce, streams)}},
 				addrTest.AddrAction))
+
+		incoming <- mockConn
 
 		go func() {
 			msg := <-report
@@ -1224,7 +1229,7 @@ func TestProcessInvAndObjectExchange(t *testing.T) {
 		b := wire.EncodeMessage(testObj[i])
 		section := b[8:]
 		hash := bmutil.Sha512(section)
-		nonce := pow.DoSequential(18400000000000, hash)
+		nonce := pow.DoSequential(10000000000000, hash)
 		binary.BigEndian.PutUint64(b, nonce)
 		testObj[i], _ = wire.DecodeMsgObject(b)
 	}
@@ -1299,6 +1304,7 @@ func TestProcessInvAndObjectExchange(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Config failed to load.")
 	}
+	cfg.MaxPeers = 1
 	defer backendLog.Flush()
 
 	for testCase, test := range tests {

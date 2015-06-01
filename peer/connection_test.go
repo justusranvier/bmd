@@ -214,12 +214,12 @@ func TestUnconnectedConnection(t *testing.T) {
 	defer peer.TstSwapDial(d)
 
 	conn := peer.NewConnection(remoteAddr, maxUpload, maxDownload)
-	if conn.RemoteAddr() != nil {
-		t.Error("There should be no remote addr before connecting.")
+	if conn.RemoteAddr() == nil {
+		t.Error("The remote adder should not be nil.")
 	}
 
 	msg, err := conn.ReadMessage()
-	if err == nil || msg != nil {
+	if err != nil || msg != nil {
 		t.Error("It should be impossible to read messages before connection is established.")
 	}
 

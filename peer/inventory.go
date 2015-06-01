@@ -6,6 +6,7 @@ package peer
 
 import (
 	"sync"
+	"sync/atomic"
 
 	"github.com/monetas/bmutil/wire"
 )
@@ -15,7 +16,7 @@ import (
 // for concurrent access.
 type Inventory struct {
 	known     *MruInventoryMap
-	requested *MruInventoryMap
+	requested int32
 	mutex     sync.RWMutex
 }
 
@@ -40,25 +41,14 @@ func (I *Inventory) AddKnown(invVect *wire.InvVect) {
 	I.known.Add(invVect)
 }
 
-// AddRequest adds a request to the set of requested inventory.
-func (I *Inventory) AddRequest(invVect *wire.InvVect) {
-	I.mutex.Lock()
-	defer I.mutex.Unlock()
-
-	I.requested.Add(invVect)
+// AddRequest marks that a certain number of objects have been requested.
+func (I *Inventory) AddRequest(i int) {
+	atomic.AddInt32(&I.requested, int32(i))
 }
 
-// DeleteRequest removes an entry from the set of requested inventory. It returns
-// true if the inventory was really removed.
-func (I *Inventory) DeleteRequest(invVect *wire.InvVect) (ok bool) {
-	I.mutex.Lock()
-	defer I.mutex.Unlock()
-
-	if I.requested.Exists(invVect) {
-		I.requested.Delete(invVect)
-		return true
-	}
-	return false
+// NumRequests is the number of object download requests that have been made.
+func (I *Inventory) NumRequests() int {
+	return int(I.requested)
 }
 
 // FilterKnown takes a list of InvVects, adds them to the list of known
@@ -71,20 +61,9 @@ func (I *Inventory) FilterKnown(inv []*wire.InvVect) []*wire.InvVect {
 	return I.known.Filter(inv)
 }
 
-// FilterRequested takes a list of InvVects, adds them to the list of requested
-// data, and returns those which were not already in the list. It is used to
-// ensure that data is not requested twice.
-func (I *Inventory) FilterRequested(inv []*wire.InvVect) []*wire.InvVect {
-	I.mutex.Lock()
-	defer I.mutex.Unlock()
-
-	return I.requested.Filter(inv)
-}
-
 // NewInventory returns a new Inventory object.
 func NewInventory() *Inventory {
 	return &Inventory{
-		known:     NewMruInventoryMap(maxKnownInventory),
-		requested: NewMruInventoryMap(maxKnownInventory),
+		known: NewMruInventoryMap(maxKnownInventory),
 	}
 }
