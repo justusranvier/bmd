@@ -8,6 +8,7 @@ import (
 	"net"
 	"time"
 
+	"github.com/DanielKrawisz/maxrate"
 	"github.com/monetas/bmutil/wire"
 )
 
@@ -24,6 +25,8 @@ type Listener interface {
 // and creates new bitmessage connections as new peers dial in.
 type listener struct {
 	netListener net.Listener
+	maxDown     int64
+	maxUp       int64
 }
 
 // Accept blocks until a new connection dials in. It returns a Connection object,
@@ -38,6 +41,8 @@ func (pl *listener) Accept() (Connection, error) {
 		conn:        conn,
 		addr:        conn.RemoteAddr(),
 		idleTimeout: time.Minute * pingTimeoutMinutes,
+		maxDown:     maxrate.New(float64(pl.maxDown), 1),
+		maxUp:       maxrate.New(float64(pl.maxUp), 1),
 	}
 
 	connection.idleTimer = time.AfterFunc(connection.idleTimeout, func() {

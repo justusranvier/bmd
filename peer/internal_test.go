@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/DanielKrawisz/maxrate"
 	"github.com/monetas/bmd/database"
 	"github.com/monetas/bmutil/wire"
 )
@@ -17,7 +18,9 @@ import (
 // of a real one for testing purposes.
 func TstNewConnection(conn net.Conn) Connection {
 	return &connection{
-		conn: conn,
+		conn:    conn,
+		maxDown: maxrate.New(100000000, 20),
+		maxUp:   maxrate.New(100000000, 20),
 	}
 }
 
@@ -200,7 +203,6 @@ func (p *Peer) TstDisconnectWait(waitChan chan struct{}, startChan chan struct{}
 	if p.conn.Connected() {
 		p.conn.Close()
 	}
-	p.logic.Stop()
 
 	// Signal that the function is in the middle of running.
 	startChan <- struct{}{}
@@ -228,7 +230,6 @@ func (p *Peer) TstStart(negotiateTimeoutSeconds, idleTimeoutMinutes uint) error 
 	}
 
 	p.send.Start(p.conn)
-	p.logic.Start()
 
 	// Start processing input and output.
 	go p.inHandler(negotiateTimeoutSeconds, idleTimeoutMinutes)

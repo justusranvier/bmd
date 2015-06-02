@@ -171,6 +171,11 @@ func dialNewMockConn(localAddr net.Addr, fail bool, closed bool) func(service, a
 	}
 }
 
+const (
+	maxUpload   = 10000000
+	maxDownload = 10000000
+)
+
 func TestDial(t *testing.T) {
 	remoteAddr := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 8333}
 	localAddr := &net.TCPAddr{IP: net.ParseIP("192.168.0.1"), Port: 8333}
@@ -178,7 +183,7 @@ func TestDial(t *testing.T) {
 	d := peer.TstSwapDial(dialNewMockConn(localAddr, false, false))
 	defer peer.TstSwapDial(d)
 
-	conn := peer.NewConnection(remoteAddr)
+	conn := peer.NewConnection(remoteAddr, maxUpload, maxDownload)
 	if conn == nil {
 		t.Errorf("No connection returned.")
 	}
@@ -192,7 +197,7 @@ func TestDial(t *testing.T) {
 	}
 
 	peer.TstSwapDial(dialNewMockConn(localAddr, true, false))
-	conn = peer.NewConnection(remoteAddr)
+	conn = peer.NewConnection(remoteAddr, maxUpload, maxDownload)
 	err = conn.Connect()
 	if err == nil {
 		t.Errorf("Error expected dialing failed connection.")
@@ -208,7 +213,7 @@ func TestUnconnectedConnection(t *testing.T) {
 	d := peer.TstSwapDial(dialNewMockConn(localAddr, false, false))
 	defer peer.TstSwapDial(d)
 
-	conn := peer.NewConnection(remoteAddr)
+	conn := peer.NewConnection(remoteAddr, maxUpload, maxDownload)
 	if conn.RemoteAddr() != nil {
 		t.Error("There should be no remote addr before connecting.")
 	}
@@ -231,14 +236,14 @@ func TestInterruptedConnection(t *testing.T) {
 	d := peer.TstSwapDial(dialNewMockConn(localAddr, false, true))
 	defer peer.TstSwapDial(d)
 
-	conn := peer.NewConnection(remoteAddr)
+	conn := peer.NewConnection(remoteAddr, maxUpload, maxDownload)
 	conn.Connect()
 	msg, err := conn.ReadMessage()
 	if err == nil || msg != nil {
 		t.Error("Connection should be closed.")
 	}
 
-	conn = peer.NewConnection(remoteAddr)
+	conn = peer.NewConnection(remoteAddr, maxUpload, maxDownload)
 	conn.Connect()
 	err = conn.WriteMessage(&wire.MsgVerAck{})
 	if err == nil {
