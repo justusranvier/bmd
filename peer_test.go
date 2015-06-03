@@ -876,8 +876,8 @@ func TestOutboundPeerHandshake(t *testing.T) {
 	remoteAddr := &net.TCPAddr{IP: net.ParseIP("192.168.0.1"), Port: 8333}
 
 	// A peer that establishes a handshake for outgoing peers.
-	handshakePeerBuilder := func(action *PeerAction) func(net.Addr) peer.Connection {
-		return func(addr net.Addr) peer.Connection {
+	handshakePeerBuilder := func(action *PeerAction) func(net.Addr, int64, int64) peer.Connection {
+		return func(addr net.Addr, maxDown, maxUp int64) peer.Connection {
 			return NewMockConnection(localAddr, remoteAddr, report,
 				NewOutboundHandshakePeerTester(action, msgAddr))
 		}
