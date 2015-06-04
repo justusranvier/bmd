@@ -33,6 +33,32 @@ func randomShaHash() *wire.ShaHash {
 	return hash
 }
 
+// tstNewPeerHandshakeComplete creates a new peer object that has already nearly
+// completed its initial handshake. You just need to send it a ver ack and it will
+// run as if that was the last step necessary. It comes already running.
+func tstNewPeerHandshakeComplete(s *server, conn peer.Connection, inventory *peer.Inventory, send peer.Send, na *wire.NetAddress) *bmpeer {
+	logic := &bmpeer{
+		server:          s,
+		protocolVersion: maxProtocolVersion,
+		bmnet:           wire.MainNet,
+		services:        wire.SFNodeNetwork,
+		inbound:         true,
+		inventory:       inventory,
+		send:            send,
+		addr:            conn.RemoteAddr(),
+		versionSent:     true,
+		versionKnown:    true,
+		userAgent:       wire.DefaultUserAgent,
+		na:              na,
+	}
+
+	p := peer.NewPeer(logic, conn, send)
+
+	logic.peer = p
+
+	return logic
+}
+
 // PeerAction represents a an action to be taken by the mock peer and information
 // about the expected response from the real peer.
 type PeerAction struct {
@@ -897,18 +923,18 @@ func TestOutboundPeerHandshake(t *testing.T) {
 
 		// Create server and start it.
 		listeners := []string{net.JoinHostPort("", "8445")}
-		serv, err := TstNewServer(listeners, getMemDb([]wire.Message{}),
+		serv, err := newServer(listeners, getMemDb([]wire.Message{}),
 			MockListen([]*MockListener{
 				NewMockListener(localAddr, make(chan peer.Connection), make(chan struct{}, 1))}))
 		if err != nil {
 			t.Fatalf("Server failed to start: %s", err)
 		}
-		serv.TstStart([]*DefaultPeer{&DefaultPeer{"5.45.99.75:8444", 1, true}})
+		serv.start([]*DefaultPeer{&DefaultPeer{"5.45.99.75:8444", 1, true}})
 
 		go func() {
 			msg := <-report
 			if msg.Err != nil {
-				t.Error(fmt.Sprintf("error case %d: %s", testCase, msg))
+				t.Errorf("error case %d: %s", testCase, msg)
 			}
 			serv.Stop()
 			testDone <- struct{}{}
@@ -1004,13 +1030,13 @@ func TestInboundPeerHandshake(t *testing.T) {
 		// Create server and start it.
 		listeners := []string{net.JoinHostPort("", "8445")}
 		var err error
-		serv, err := TstNewServer(listeners, getMemDb([]wire.Message{}),
+		serv, err := newServer(listeners, getMemDb([]wire.Message{}),
 			MockListen([]*MockListener{
 				NewMockListener(localAddr, incoming, make(chan struct{}))}))
 		if err != nil {
 			t.Fatalf("Server failed to start: %s", err)
 		}
-		serv.TstStart([]*DefaultPeer{})
+		serv.start([]*DefaultPeer{})
 
 		// Test handshake.
 		incoming <- NewMockConnection(localAddr, remoteAddr, report,
@@ -1019,7 +1045,7 @@ func TestInboundPeerHandshake(t *testing.T) {
 		go func(tCase int) {
 			msg := <-report
 			if msg.Err != nil {
-				t.Error(fmt.Sprintf("error case %d: %s", tCase, msg))
+				t.Errorf("error case %d: %s", tCase, msg)
 			}
 			serv.Stop()
 		}(testCase)
@@ -1110,13 +1136,13 @@ func TestProcessAddr(t *testing.T) {
 
 		// Create server and start it.
 		listeners := []string{net.JoinHostPort("", "8445")}
-		serv, err := TstNewServer(listeners, getMemDb([]wire.Message{}),
+		serv, err := newServer(listeners, getMemDb([]wire.Message{}),
 			MockListen([]*MockListener{
 				NewMockListener(localAddr, incoming, make(chan struct{}))}))
 		if err != nil {
 			t.Fatal("Server failed to start.")
 		}
-		serv.TstStart([]*DefaultPeer{})
+		serv.start([]*DefaultPeer{})
 
 		for i := 0; i < addrTest.NumAddrs; i++ {
 			s := fmt.Sprintf("%d.173.147.%d:8333", i/64+60, i%64+60)
@@ -1134,7 +1160,7 @@ func TestProcessAddr(t *testing.T) {
 		go func() {
 			msg := <-report
 			if msg.Err != nil {
-				t.Error(fmt.Sprintf("error case %d: %s", testCase, msg))
+				t.Errorf("error case %d: %s", testCase, msg)
 			}
 			serv.Stop()
 		}()
@@ -1312,27 +1338,27 @@ func TestProcessInvAndObjectExchange(t *testing.T) {
 		// Create server and start it.
 		listeners := []string{net.JoinHostPort("", "8445")}
 		db := getMemDb(test.peerDB)
-		serv, err := TstNewServer(listeners, db,
+		serv, err := newServer(listeners, db,
 			MockListen([]*MockListener{
 				NewMockListener(localAddr, incoming, make(chan struct{}))}))
 		if err != nil {
 			t.Fatal("Server failed to start.")
 		}
 
-		serv.TstStart([]*DefaultPeer{})
+		serv.start([]*DefaultPeer{})
 
 		mockConn := NewMockConnection(localAddr, remoteAddr, report,
 			NewDataExchangePeerTester(test.mockDB, test.peerDB, test.invAction))
 		mockSend := NewMockSendQueue(mockConn)
 		inventory := peer.NewInventory()
 		na, _ := wire.NewNetAddress(remoteAddr, 1, 0)
-		serv.handleAddPeerMsg(TstNewPeerHandshakeComplete(serv, mockConn, inventory, mockSend, na))
+		serv.handleAddPeerMsg(tstNewPeerHandshakeComplete(serv, mockConn, inventory, mockSend, na))
 
 		var msg TestReport
 		go func() {
 			msg = <-report
 			if msg.Err != nil {
-				t.Error(fmt.Sprintf("error case %d: %s", testCase, msg))
+				t.Errorf("error case %d: %s", testCase, msg)
 			}
 			serv.Stop()
 		}()

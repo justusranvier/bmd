@@ -50,7 +50,7 @@ type counter struct {
 }
 
 func (cmap *counter) Insert(hash *wire.ShaHash) {
-	cmap.CounterPos += 1                   // increment, new item.
+	cmap.CounterPos++                      // increment, new item.
 	cmap.ByCounter[cmap.CounterPos] = hash // insert to counter map
 }
 
@@ -213,7 +213,7 @@ func (db *MemDb) FetchObjectsFromCounter(objType wire.ObjectType, counter uint64
 
 	counterMap := db.getCounter(objType)
 
-	var c uint64 = 0 // count
+	var c uint64 // count
 
 	keys := make([]uint64, 0, count)
 
@@ -223,7 +223,7 @@ func (db *MemDb) FetchObjectsFromCounter(objType wire.ObjectType, counter uint64
 			continue
 		}
 		keys = append(keys, k)
-		c += 1
+		c++
 	}
 	sort.Sort(counters(keys)) // sort retrieved keys
 	var newCounter uint64
@@ -280,7 +280,7 @@ func (db *MemDb) FetchIdentityByAddress(addr *bmutil.Address) (*identity.Public,
 		case wire.SimplePubKeyVersion:
 			fallthrough
 		case wire.ExtendedPubKeyVersion:
-			id, err := identity.IdentityFromPubKeyMsg(msg)
+			id, err := identity.FromPubKeyMsg(msg)
 			if err != nil { // invalid encryption/signing keys
 				return nil, err
 			}
@@ -357,7 +357,7 @@ func (db *MemDb) FetchRandomInvHashes(count uint64,
 		}
 		if filter(&hash, obj) { // we need this item
 			res = append(res, hash)
-			counter += 1
+			counter++
 		}
 	}
 
@@ -415,7 +415,7 @@ func (db *MemDb) InsertObject(data []byte) (uint64, error) {
 		case wire.SimplePubKeyVersion:
 			fallthrough
 		case wire.ExtendedPubKeyVersion:
-			id, err := identity.IdentityFromPubKeyMsg(msg)
+			id, err := identity.FromPubKeyMsg(msg)
 			if err != nil { // invalid encryption/signing keys
 				goto doneInsert
 			}

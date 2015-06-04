@@ -444,7 +444,7 @@ func testPubKey(tc *testContext) {
 	}
 	count, _ := tc.db.GetCounter(wire.ObjectTypePubKey)
 	if count != 1 {
-		tc.t.Errorf("GetCounter (%s): got %d expected %d", count, 1)
+		tc.t.Errorf("GetCounter (%s): got %d expected %d", tc.dbType, count, 1)
 	}
 
 	// test FetchIdentityByAddress for an address that does not exist
