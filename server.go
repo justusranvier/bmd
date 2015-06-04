@@ -675,8 +675,8 @@ func parseListeners(addrs []string) ([]string, []string, bool, error) {
 	return ipv4ListenAddrs, ipv6ListenAddrs, haveWildcard, nil
 }
 
-// NewServer returns a new server.
-func NewServer(listenAddrs []string, db database.Db) (*server, error) {
+// newDefaultServer returns a new server with the default listener.
+func newDefaultServer(listenAddrs []string, db database.Db) (*server, error) {
 	return newServer(listenAddrs, db, peer.Listen)
 }
 

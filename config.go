@@ -333,7 +333,7 @@ func loadConfig() (*config, []string, error) {
 		RPCCert:        defaultRPCCertFile,
 		MaxDownPerPeer: defaultMaxDownPerPeer,
 		MaxUpPerPeer:   defaultMaxUpPerPeer,
-		MaxOutbound:    defaultMaxOutbound, 
+		MaxOutbound:    defaultMaxOutbound,
 	}
 
 	// Pre-parse the command line options to see if an alternative config

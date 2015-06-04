@@ -75,7 +75,7 @@ func bmdMain() error {
 	})
 
 	// Create server and start it.
-	server, err := NewServer(cfg.Listeners, db)
+	server, err := newDefaultServer(cfg.Listeners, db)
 	if err != nil {
 		serverLog.Errorf("Failed to start server on %v: %v", cfg.Listeners,
 			err)
