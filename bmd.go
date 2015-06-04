@@ -97,7 +97,7 @@ func bmdMain() error {
 	// for the interrupt handler goroutine to finish.
 	go func() {
 		server.WaitForShutdown()
-		serverLog.Infof("Server shutdown complete")
+		serverLog.Info("Server shutdown complete")
 		shutdownChannel <- struct{}{}
 	}()
 

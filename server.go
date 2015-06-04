@@ -34,9 +34,6 @@ const (
 	// connectionRetryInterval is the amount of time to wait in between
 	// retries when connecting to persistent peers.
 	connectionRetryInterval = time.Second * 10
-
-	// defaultMaxOutbound is the default number of max outbound peers.
-	defaultMaxOutbound = 8
 )
 
 // The peerState is used by the server to keep track of what the peers it is
@@ -193,6 +190,7 @@ func (s *server) handleAddPeerMsg(p *bmpeer) bool {
 		// they should be rescheduled.
 		return false
 	}
+	peerLog.Infof(p.peer.PrependAddr("added to server."))
 
 	// Add the new peer and start it.
 	if p.inbound {
@@ -216,26 +214,22 @@ func (s *server) handleDonePeerMsg(p *bmpeer) {
 	var list map[*bmpeer]struct{}
 	if p.Persistent {
 		list = s.state.persistentPeers
+		peerLog.Info(p.peer.PrependAddr("Removed from server. "), len(list), " persistent peers remain.")
 	} else if p.inbound {
 		list = s.state.peers
+		peerLog.Info(p.peer.PrependAddr("Removed from server. "), len(list), " inbound peers remain.")
 	} else {
 		list = s.state.outboundPeers
+		peerLog.Info(p.peer.PrependAddr("Removed from server. "), len(list)-1, " outbound peers remain.")
 	}
-	for e := range list {
-		if e == p {
-			// Issue an asynchronous reconnect if the peer was a
-			// persistent outbound connection.
-			if !p.inbound && p.Persistent && atomic.LoadInt32(&s.shutdown) == 0 {
-				// TODO eventually we shouldn't work with addresses represented as strings at all.
-				e = newOutboundPeer(p.addr.String(), s, p.na.Stream, true, p.RetryCount+1)
-				return
-			}
-			if !p.inbound {
-				s.state.outboundGroups[addrmgr.GroupKey(p.na)]--
-			}
-			delete(list, e)
-			return
-		}
+
+	delete(list, p)
+	// Issue an asynchronous reconnect if the peer was a
+	// persistent outbound connection.
+	if !p.inbound && p.Persistent && atomic.LoadInt32(&s.shutdown) == 0 {
+		// TODO eventually we shouldn't work with addresses represented as strings at all.
+		list[newOutboundPeer(p.addr.String(), s, p.na.Stream, true, p.RetryCount+1)] = struct{}{}
+		peerLog.Infof(p.peer.PrependAddr("Reconnected."))
 	}
 }
 
@@ -286,6 +280,8 @@ type getAddedNodesMsg struct {
 // This function exists to add initial peers to the address manager before the
 // peerHandler go routine has entered its main loop.
 func (s *server) AddNewPeer(addr string, stream uint32, permanent bool) error {
+	serverLog.Debug("Creating peer at ", addr, ", stream: ", stream)
+
 	// XXX(oga) duplicate oneshots?
 	if permanent {
 		for p := range s.state.persistentPeers {
@@ -415,6 +411,7 @@ func (s *server) listenHandler(listener peer.Listener) {
 // peers to and from the server, banning peers, and broadcasting messages to
 // peers. It must be run in a goroutine.
 func (s *server) peerHandler() {
+	serverLog.Info("Peer handler started.")
 	// Start the address manager, needed by peers.
 	// This is done here since their lifecycle is closely tied
 	// to this handler and rather than adding more channels to sychronize
@@ -435,6 +432,17 @@ func (s *server) peerHandler() {
 
 	for {
 		select {
+		// Shutdown the peer handler.
+		case <-s.quit:
+			// Shutdown peers.
+			s.state.forAllPeers(func(p *bmpeer) {
+				p.disconnect()
+			})
+			s.addrManager.Stop()
+			s.objectManager.Stop()
+			s.wg.Done()
+			return
+
 		// New peers connected to the server.
 		case p := <-s.newPeers:
 			s.handleAddPeerMsg(p)
@@ -453,17 +461,6 @@ func (s *server) peerHandler() {
 
 		case qmsg := <-s.query:
 			s.handleQuery(qmsg)
-
-		// Shutdown the peer handler.
-		case <-s.quit:
-			// Shutdown peers.
-			s.state.forAllPeers(func(p *bmpeer) {
-				p.disconnect()
-			})
-			s.addrManager.Stop()
-			s.objectManager.Stop()
-			s.wg.Done()
-			return
 		}
 
 		// Only try connect to more peers if we actually need more.
@@ -483,6 +480,7 @@ func (s *server) peerHandler() {
 			if addr == nil {
 				break
 			}
+
 			key := addrmgr.GroupKey(addr.NetAddress())
 			// Address will not be invalid, local or unroutable
 			// because addrmanager rejects those on addition.
@@ -495,6 +493,7 @@ func (s *server) peerHandler() {
 			}
 
 			tries++
+
 			// After 100 bad tries exit the loop and we'll try again
 			// later.
 			if tries > 100 {
@@ -505,12 +504,14 @@ func (s *server) peerHandler() {
 
 			// only allow recent nodes (10mins) after we failed 30
 			// times
-			if time.Now().After(addr.LastAttempt().Add(10*time.Minute)) &&
+			if time.Now().Before(addr.LastAttempt().Add(10*time.Minute)) &&
 				tries < 30 {
+				serverLog.Debug("Continuing because last attempt is too soon. ")
 				continue
 			}
 
 			addrStr := addrmgr.NetAddressKey(addr.NetAddress())
+			serverLog.Info("need more peers; attempting to connect to ", addrStr)
 
 			tries = 0
 			// any failure will be due to banned peers etc. we have
@@ -524,6 +525,7 @@ func (s *server) peerHandler() {
 
 		// We need more peers, wake up in ten seconds and try again.
 		if s.state.NeedMoreOutbound() {
+			serverLog.Error("Unable to connect to new peers. Retrying in 10 seconds.")
 			time.AfterFunc(10*time.Second, func() {
 				s.wakeup <- struct{}{}
 			})
@@ -757,7 +759,7 @@ func newServer(listenAddrs []string, db database.Db,
 		nonce:       nonce,
 		listeners:   listeners,
 		addrManager: amgr,
-		state:       newPeerState(defaultMaxOutbound),
+		state:       newPeerState(cfg.MaxOutbound),
 		newPeers:    make(chan *bmpeer, cfg.MaxPeers),
 		donePeers:   make(chan *bmpeer, cfg.MaxPeers),
 		banPeers:    make(chan *bmpeer, cfg.MaxPeers),

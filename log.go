@@ -16,6 +16,7 @@ import (
 	"github.com/btcsuite/seelog"
 	"github.com/monetas/bmd/addrmgr"
 	"github.com/monetas/bmd/database"
+	"github.com/monetas/bmd/peer"
 	"github.com/monetas/bmutil/wire"
 )
 
@@ -84,6 +85,7 @@ func useLogger(subsystemID string, logger btclog.Logger) {
 
 	case "PEER":
 		peerLog = logger
+		peer.UseLogger(logger)
 
 	case "RPC":
 		rpcLog = logger

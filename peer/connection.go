@@ -54,7 +54,7 @@ type connection struct {
 func (pc *connection) WriteMessage(msg wire.Message) error {
 	// conn will be nill if the connection disconnected.
 	if pc.conn == nil {
-		return errors.New("No connection established")
+		return errors.New("No connection established.")
 	}
 
 	// Write the message to the peer.
@@ -66,7 +66,10 @@ func (pc *connection) WriteMessage(msg wire.Message) error {
 	pc.receivedMtx.Unlock()
 
 	if err != nil {
-		pc.conn = nil
+		if pc.conn == nil { //Connection might have been closed while reading.
+			return nil
+		}
+		pc.Close()
 		return err
 	}
 
@@ -79,7 +82,7 @@ func (pc *connection) WriteMessage(msg wire.Message) error {
 func (pc *connection) ReadMessage() (wire.Message, error) {
 	// conn will be nill if the connection disconnected.
 	if pc.conn == nil {
-		return nil, errors.New("No connection established")
+		return nil, nil
 	}
 
 	n, msg, _, err := wire.ReadMessageN(pc.conn, wire.MainNet)
@@ -90,7 +93,10 @@ func (pc *connection) ReadMessage() (wire.Message, error) {
 	pc.receivedMtx.Unlock()
 
 	if err != nil {
-		pc.conn = nil
+		if pc.conn == nil { //Connection might have been closed while reading.
+			return nil, nil
+		}
+		pc.Close()
 		return nil, err
 	}
 
@@ -132,7 +138,7 @@ func (pc *connection) LastRead() time.Time {
 // RemoteAddr returns the address of the remote peer.
 func (pc *connection) RemoteAddr() net.Addr {
 	if pc.conn == nil {
-		return nil
+		return pc.addr
 	}
 	return pc.conn.RemoteAddr()
 }
@@ -140,8 +146,9 @@ func (pc *connection) RemoteAddr() net.Addr {
 // Close disconnects the peer and stops running the connection.
 func (pc *connection) Close() {
 	if pc.conn != nil {
-		pc.conn.Close()
+		conn := pc.conn
 		pc.conn = nil
+		conn.Close()
 	}
 
 	pc.idleTimer.Stop()

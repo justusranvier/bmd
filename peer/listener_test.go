@@ -142,9 +142,9 @@ func TestConnectionAndListener(t *testing.T) {
 
 		mc.Close()
 
-		_, err = mc.ReadMessage()
-		if err == nil {
-			t.Errorf("Error expected because the connection should be closed.")
+		msg, err = mc.ReadMessage()
+		if msg != nil && err != nil {
+			t.Errorf("Connection should be closed and no message read.")
 		}
 
 		testStep <- struct{}{}

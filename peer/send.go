@@ -10,6 +10,7 @@ package peer
 import (
 	"container/list"
 	"errors"
+	"fmt"
 	"math/rand"
 	"sync"
 	"sync/atomic"
@@ -241,6 +242,8 @@ out:
 				continue
 			}
 
+			log.Debug(send.PrependAddr("Trickling an inv."))
+
 			// Create and send as many inv messages as needed to
 			// drain the inventory send queue.
 			invMsg := wire.NewMsgInv()
@@ -306,6 +309,12 @@ out:
 	}
 
 	send.doneWg.Done()
+}
+
+// A helper function for logging that adds the ip address to the start of the
+// string to be logged.
+func (send *send) PrependAddr(str string) string {
+	return fmt.Sprintf("%s : %s", send.conn.RemoteAddr().String(), str)
 }
 
 // NewSend returns a new sendQueue object.

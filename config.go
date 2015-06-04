@@ -39,6 +39,7 @@ const (
 	defaultRPCPort        = "8442"
 	defaultMaxUpPerPeer   = 1024 * 1024 // 1MBps
 	defaultMaxDownPerPeer = 1024 * 1024
+	defaultMaxOutbound    = 10
 )
 
 var (
@@ -57,6 +58,7 @@ var (
 // of bytes (int64).
 type Filesize int64
 
+// MarshalFlag returns a file size as a string.
 func (size Filesize) MarshalFlag() (string, error) {
 	s := int64(size)
 	if s < 1024 { // B
@@ -65,11 +67,11 @@ func (size Filesize) MarshalFlag() (string, error) {
 		return fmt.Sprintf("%.2fK", float64(size)/1024), nil
 	} else if s < 1024*1024*1024 { // MB
 		return fmt.Sprintf("%.2fM", float64(size)/(1024*1024)), nil
-	} else { // GB
-		return fmt.Sprintf("%.2fG", float64(size)/(1024*1024*1024)), nil
-	}
+	} // GB
+	return fmt.Sprintf("%.2fG", float64(size)/(1024*1024*1024)), nil
 }
 
+// UnmarshalFlag takes a string and interprets it as a Filesize.
 func (size *Filesize) UnmarshalFlag(value string) error {
 	if len(value) < 2 {
 		return errors.New("invalid input")
@@ -139,6 +141,7 @@ type config struct {
 	Upnp           bool          `long:"upnp" description:"Use UPnP to map our listening port outside of NAT"`
 	MaxUpPerPeer   Filesize      `long:"maxupload" description:"Maximum upload rate for any peer. Valid units are {B, K, M, G} bytes/sec."`
 	MaxDownPerPeer Filesize      `long:"maxdownload" description:"Maximum download rate for any peer. Valid units are {B, K, M, G} bytes/sec."`
+	MaxOutbound    int           `long:"maxoutbound" description:"The maximum number of outbound peers that bmd will try to maintain."`
 	onionlookup    func(string) ([]net.IP, error)
 	lookup         func(string) ([]net.IP, error)
 	oniondial      func(string, string) (net.Conn, error)
@@ -330,6 +333,7 @@ func loadConfig() (*config, []string, error) {
 		RPCCert:        defaultRPCCertFile,
 		MaxDownPerPeer: defaultMaxDownPerPeer,
 		MaxUpPerPeer:   defaultMaxUpPerPeer,
+		MaxOutbound:    defaultMaxOutbound, 
 	}
 
 	// Pre-parse the command line options to see if an alternative config

@@ -9,6 +9,7 @@ package peer
 
 import (
 	"errors"
+	"fmt"
 	"sync/atomic"
 	"time"
 
@@ -16,9 +17,6 @@ import (
 )
 
 const (
-	// maxProtocolVersion is the max protocol version the peer supports.
-	//maxProtocolVersion = 3
-
 	// outputBufferSize is the number of elements the output channels use.
 	outputBufferSize = 50
 
@@ -28,7 +26,9 @@ const (
 
 	// maxKnownInventory is the maximum number of items to keep in the known
 	// inventory cache.
-	maxKnownInventory = 1000
+	// Originally this was set at 1000, but until there is more intelligent
+	// behavior from the object manager, this must be set at MaxInvPerMsg.
+	maxKnownInventory = wire.MaxInvPerMsg
 
 	// negotiateTimeoutSeconds is the number of seconds of inactivity before
 	// we timeout a peer that hasn't completed the initial version
@@ -66,23 +66,23 @@ func (p *Peer) Connected() bool {
 // Disconnect disconnects the peer by closing the connection. It also sets
 // a flag so the impending shutdown can be detected.
 func (p *Peer) Disconnect() {
+	defer atomic.StoreInt32(&p.disconnect, 0)
+	// Already stopping?
+	if atomic.AddInt32(&p.disconnect, 1) != 1 {
+		return
+	}
 
 	// Don't stop if we're not running.
 	if atomic.LoadInt32(&p.started) == 0 {
 		return
 	}
 
-	// Already stopping? (shouldn't happen at all anymore.)
-	if atomic.AddInt32(&p.disconnect, 1) != 1 {
-		return
-	}
-
 	if p.conn.Connected() {
 		p.conn.Close()
 	}
+	p.logic.Stop()
 
 	atomic.StoreInt32(&p.started, 0)
-	atomic.StoreInt32(&p.disconnect, 0)
 }
 
 // Start begins processing input and output messages. It also sends the initial
@@ -133,6 +133,7 @@ func (p *Peer) inHandler(handshakeTimeoutSeconds, idleTimeoutMinutes uint) {
 	// timeframe than a general idle timeout. The timer is then reset below
 	// to idleTimeoutMinutes for all future messages.
 	idleTimer := time.AfterFunc(time.Duration(handshakeTimeoutSeconds)*time.Second, func() {
+		log.Error(p.PrependAddr("Disconnecting due to idle time out."))
 		p.Disconnect()
 	})
 
@@ -142,47 +143,48 @@ out:
 		// Stop the timer now, if we go around again we will reset it.
 		idleTimer.Stop()
 		if err != nil {
+			log.Debugf(p.PrependAddr("Invalid message received: "), err)
+			// Ignore messages we don't understand.
+			continue
+		}
+		if rmsg == nil {
 			break out
 		}
 
 		// Handle each supported message type.
-		markConnected := false
 		err = nil
 		switch msg := rmsg.(type) {
 		case *wire.MsgVersion:
 			err = p.logic.HandleVersionMsg(msg)
-			markConnected = true
 
 		case *wire.MsgVerAck:
 			err = p.logic.HandleVerAckMsg()
-			markConnected = true
 
 		case *wire.MsgAddr:
 			err = p.logic.HandleAddrMsg(msg)
-			markConnected = true
 
 		case *wire.MsgInv:
 			err = p.logic.HandleInvMsg(msg)
-			markConnected = true
 
 		case *wire.MsgGetData:
 			err = p.logic.HandleGetDataMsg(msg)
-			markConnected = true
 
 		case *wire.MsgGetPubKey, *wire.MsgPubKey, *wire.MsgMsg, *wire.MsgBroadcast, *wire.MsgUnknownObject:
 			err = p.logic.HandleObjectMsg(rmsg)
-			markConnected = true
 
 		case *wire.MsgPong:
-			markConnected = true
+
+		default:
+			log.Warn(p.PrependAddr("Invalid message processed. This should not happen."))
+			break out
 		}
 
 		if err != nil {
+			log.Error(p.PrependAddr("Error handling message: "), err)
 			break out
 		}
-		if markConnected == true { // XXX to make it compile
-			idleTimer.Reset(time.Duration(idleTimeoutMinutes) * time.Minute)
-		}
+
+		idleTimer.Reset(time.Duration(idleTimeoutMinutes) * time.Minute)
 	}
 
 	idleTimer.Stop()
@@ -190,6 +192,12 @@ out:
 	// Ensure connection is closed and notify the server that the peer is
 	// done.
 	p.Disconnect()
+}
+
+// PrependAddr is a helper function for logging that adds the ip address to
+// the start of the string to be logged.
+func (p *Peer) PrependAddr(str string) string {
+	return fmt.Sprintf("%s : %s", p.conn.RemoteAddr().String(), str)
 }
 
 // NewPeer returns a new Peer object.

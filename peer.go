@@ -87,22 +87,33 @@ func (p *bmpeer) HandshakeComplete() bool {
 
 // disconnect disconnects the peer.
 func (p *bmpeer) disconnect() {
+	if !p.peer.Connected() {
+		return
+	}
 	p.peer.Disconnect()
+	peerLog.Info(p.peer.PrependAddr("disconnected."))
+}
 
+// Start starts running the peer.
+func (p *bmpeer) Start() {
+	peerLog.Info(p.peer.PrependAddr("Started."))
+	if p.peer.Start() != nil {
+		p.server.donePeers <- p
+		peerLog.Error(p.peer.PrependAddr("Failed to connect."))
+	}
+	if !p.inbound {
+		p.PushVersionMsg()
+	}
+}
+
+// Stop cleans up the internal data of the peer.
+func (p *bmpeer) Stop() {
 	// Only tell object manager we are gone if we ever told it we existed.
 	if p.HandshakeComplete() {
 		p.server.objectManager.DonePeer(p)
 	}
 
 	p.server.donePeers <- p
-}
-
-// Start starts running the peer.
-func (p *bmpeer) Start() {
-	p.peer.Start()
-	if !p.inbound {
-		p.PushVersionMsg()
-	}
 }
 
 // ProtocolVersion returns the peer protocol version in a manner that is safe
@@ -118,6 +129,7 @@ func (p *bmpeer) ProtocolVersion() uint32 {
 // current state.
 func (p *bmpeer) PushVersionMsg() {
 	if p.versionSent {
+		peerLog.Error(p.peer.PrependAddr("For some reason we are trying to send a version message a second time."))
 		return
 	}
 
@@ -142,12 +154,16 @@ func (p *bmpeer) PushVersionMsg() {
 
 	p.QueueMessage(msg)
 
+	p.StatsMtx.Lock()
 	p.versionSent = true
+	p.StatsMtx.Unlock()
+	peerLog.Debug(p.peer.PrependAddr("Version message sent."))
 }
 
 // PushVerAckMsg sends a ver ack to the remote peer.
 func (p *bmpeer) PushVerAckMsg() {
 	p.QueueMessage(&wire.MsgVerAck{})
+	peerLog.Debug(p.peer.PrependAddr("Ver ack message sent."))
 }
 
 func max(x, y int) int {
@@ -158,9 +174,7 @@ func max(x, y int) int {
 }
 
 // PushGetDataMsg creates a GetData message and sends it to the remote peer.
-func (p *bmpeer) PushGetDataMsg(invVect []*wire.InvVect) {
-	ivl := p.inventory.FilterRequested(invVect)
-
+func (p *bmpeer) PushGetDataMsg(ivl []*wire.InvVect) {
 	if len(ivl) == 0 {
 		return
 	}
@@ -168,11 +182,13 @@ func (p *bmpeer) PushGetDataMsg(invVect []*wire.InvVect) {
 	x := 0
 	for len(ivl)-x > wire.MaxInvPerMsg {
 		p.QueueMessage(&wire.MsgInv{InvList: ivl[x : x+wire.MaxInvPerMsg]})
+		peerLog.Debug(p.peer.PrependAddr(fmt.Sprint("get data message sent with ", wire.MaxInvPerMsg, " hashes.")))
 		x += wire.MaxInvPerMsg
 	}
 
 	if len(ivl)-x > 0 {
 		p.QueueMessage(&wire.MsgGetData{InvList: ivl[x:]})
+		peerLog.Debug(p.peer.PrependAddr(fmt.Sprint("Get data message sent with ", len(ivl)-x, " hashes.")))
 	}
 }
 
@@ -183,11 +199,13 @@ func (p *bmpeer) PushInvMsg(invVect []*wire.InvVect) {
 	x := 0
 	for len(ivl)-x > wire.MaxInvPerMsg {
 		p.QueueMessage(&wire.MsgInv{InvList: ivl[x : x+wire.MaxInvPerMsg]})
+		peerLog.Debug(p.peer.PrependAddr(fmt.Sprint("Inv message sent with ", wire.MaxInvPerMsg, " hashes.")))
 		x += wire.MaxInvPerMsg
 	}
 
 	if len(ivl)-x > 0 {
 		p.QueueMessage(&wire.MsgInv{InvList: ivl[x:]})
+		peerLog.Debug(p.peer.PrependAddr(fmt.Sprint("Inv message sent with ", len(ivl)-x, " hashes.")))
 	}
 }
 
@@ -206,7 +224,7 @@ func (p *bmpeer) PushObjectMsg(sha *wire.ShaHash) {
 	p.QueueMessage(msg)
 }
 
-// pushAddrMsg sends one, or more, addr message(s) to the connected peer using
+// PushAddrMsg sends one, or more, addr message(s) to the connected peer using
 // the provided addresses.
 func (p *bmpeer) PushAddrMsg(addresses []*wire.NetAddress) error {
 	// Nothing to send.
@@ -244,6 +262,7 @@ func (p *bmpeer) PushAddrMsg(addresses []*wire.NetAddress) error {
 		}
 
 		p.QueueMessage(msg)
+		peerLog.Debug(p.peer.PrependAddr(fmt.Sprint("Addr message sent with ", numAdded, " addresses.")))
 		return nil
 	}
 	return errors.New("No addresses added.")
@@ -281,6 +300,7 @@ func (p *bmpeer) HandleVersionMsg(msg *wire.MsgVersion) error {
 
 		return errors.New("Only one version message allowed per peer.")
 	}
+	peerLog.Debug(p.peer.PrependAddr("Version msg received."))
 	p.versionKnown = true
 
 	// Set the supported services for the peer to what the remote peer
@@ -325,8 +345,10 @@ func (p *bmpeer) HandleVersionMsg(msg *wire.MsgVersion) error {
 func (p *bmpeer) HandleVerAckMsg() error {
 	// If no version message has been sent disconnect.
 	if !p.versionSent {
+		peerLog.Error(p.peer.PrependAddr("Ver ack msg received before version sent."))
 		return errors.New("Version not yet received.")
 	}
+	peerLog.Debug(p.peer.PrependAddr("Ver ack msg received."))
 
 	p.verAckReceived = true
 	p.server.addrManager.Connected(p.na)
@@ -353,6 +375,7 @@ func (p *bmpeer) HandleInvMsg(msg *wire.MsgInv) error {
 		return errors.New("Empty inv received.")
 	}
 
+	peerLog.Debug(p.peer.PrependAddr(fmt.Sprint("Inv received with ", len(msg.InvList), " hashes.")))
 	p.server.objectManager.QueueInv(msg, p)
 	p.server.addrManager.Connected(p.na)
 	return nil
@@ -364,6 +387,7 @@ func (p *bmpeer) HandleGetDataMsg(msg *wire.MsgGetData) error {
 	if !p.HandshakeComplete() {
 		return errors.New("Handshake not complete.")
 	}
+	peerLog.Debug(p.peer.PrependAddr(fmt.Sprint("GetData request received for ", len(msg.InvList), " objects.")))
 
 	err := p.send.QueueDataRequest(msg.InvList)
 	if err != nil {
@@ -380,7 +404,7 @@ func (p *bmpeer) HandleObjectMsg(msg wire.Message) error {
 		return errors.New("Handshake not complete.")
 	}
 
-	p.inventory.DeleteRequest(&wire.InvVect{Hash: *wire.MessageHash(msg)})
+	p.inventory.AddRequest(-1)
 
 	p.server.objectManager.QueueObject(msg, p)
 	p.server.addrManager.Connected(p.na)
@@ -413,6 +437,9 @@ func (p *bmpeer) HandleAddrMsg(msg *wire.MsgAddr) error {
 		// Add address to known addresses for this peer.
 		p.knownAddresses[addrmgr.NetAddressKey(na)] = struct{}{}
 	}
+
+	peerLog.Debug(p.peer.PrependAddr(fmt.Sprint("addr message with ",
+		len(msg.AddrList), " addrs. Peer has ", len(p.knownAddresses), " addrs.")))
 
 	// Add addresses to server address manager. The address manager handles
 	// the details of things such as preventing duplicate addresses, max
@@ -447,6 +474,7 @@ func (p *bmpeer) handleInitialConnection() {
 		invVectList[i] = &wire.InvVect{Hash: hash}
 	}
 	p.PushInvMsg(invVectList)
+	peerLog.Debug(p.peer.PrependAddr("handshake complete."))
 }
 
 // newPeerBase returns a new base bitmessage peer for the provided server and

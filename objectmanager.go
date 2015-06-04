@@ -8,6 +8,7 @@
 package main
 
 import (
+	"fmt"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -118,6 +119,9 @@ func (om *ObjectManager) handleObjectMsg(omsg *objectMsg) {
 		// thus disconnecting legitimate peers. We want to prevent against such
 		// an attack by checking that objects came from peers that we requested
 		// from.
+		peerLog.Errorf(omsg.peer.peer.PrependAddr(
+			fmt.Sprint("Disconnecting because of unrequested object ",
+				invVect.Hash.String()[:8], " received.")))
 		omsg.peer.disconnect()
 		return
 	}
@@ -131,6 +135,7 @@ func (om *ObjectManager) handleObjectMsg(omsg *objectMsg) {
 		om.server.db.InsertObject(obj)
 	}
 
+	peerLog.Debugf(omsg.peer.peer.PrependAddr(fmt.Sprint("Object ", invVect.Hash.String()[:8], " received.")))
 	om.server.handleRelayInvMsg(invVect)
 }
 
@@ -174,6 +179,7 @@ func (om *ObjectManager) handleInvMsg(imsg *invMsg) {
 		return
 	}
 
+	peerLog.Debugf(imsg.peer.peer.PrependAddr(fmt.Sprint(i, " unknown hashes received.")))
 	// get inventory from specified peer
 	imsg.peer.PushGetDataMsg(requestQueue[:i])
 }

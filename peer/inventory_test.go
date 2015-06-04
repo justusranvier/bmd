@@ -32,18 +32,17 @@ func TestIsAddKnown(t *testing.T) {
 	}
 }
 
-func TestAddDeleteRequest(t *testing.T) {
+func TestRequest(t *testing.T) {
 	inventory := peer.NewInventory()
 
-	a := &wire.InvVect{Hash: *randomShaHash()}
-
-	if inventory.DeleteRequest(a) {
-		t.Error("Map should be empty.")
+	if inventory.NumRequests() != 0 {
+		t.Error("Number of requests should be zero.")
 	}
 
-	inventory.AddRequest(a)
-	if !inventory.DeleteRequest(a) {
-		t.Error("Map should not be empty..")
+	inventory.AddRequest(3)
+
+	if inventory.NumRequests() != 3 {
+		t.Error("Number of requests should be three.")
 	}
 }
 
@@ -72,35 +71,6 @@ func TestFilterKnown(t *testing.T) {
 		t.Error("Element should be present.")
 	}
 	if !inventory.IsKnown(c) {
-		t.Error("Element should be present.")
-	}
-}
-
-func TestFilterRequested(t *testing.T) {
-	inventory := peer.NewInventory()
-
-	a := &wire.InvVect{Hash: *randomShaHash()}
-	b := &wire.InvVect{Hash: *randomShaHash()}
-	c := &wire.InvVect{Hash: *randomShaHash()}
-
-	inventory.AddRequest(a)
-
-	ret := inventory.FilterRequested([]*wire.InvVect{a, b, c})
-
-	if len(ret) != 2 {
-		t.Errorf("Filtered list has the wrong size. Got %d expected %d.", len(ret), 2)
-	}
-	if ret[0] != b {
-		t.Error("Wrong filtered list returned.")
-	}
-
-	if !inventory.DeleteRequest(a) {
-		t.Error("Element should be present.")
-	}
-	if !inventory.DeleteRequest(b) {
-		t.Error("Element should be present.")
-	}
-	if !inventory.DeleteRequest(c) {
 		t.Error("Element should be present.")
 	}
 }
