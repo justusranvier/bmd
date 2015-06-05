@@ -43,9 +43,9 @@ func (c counters) Swap(i, j int) {
 // counter includes a map to a kind of object and the counter value of the last
 // element added.
 type counter struct {
-	// holds a mapping from counter to shahash for some object types.
+	// Holds a mapping from counter to shahash for some object types.
 	ByCounter map[uint64]*wire.ShaHash
-	// keep track of current counter positions (last element added)
+	// Keep track of current counter positions (last element added)
 	CounterPos uint64
 }
 
@@ -59,7 +59,7 @@ func (cmap *counter) Insert(hash *wire.ShaHash) {
 // persistent and is mostly only useful for testing purposes.
 type MemDb struct {
 	// Embed a mutex for safe concurrent access.
-	sync.Mutex
+	sync.RWMutex
 
 	// objectsByHash keeps track of unexpired objects by their inventory hash.
 	objectsByHash map[wire.ShaHash][]byte
@@ -99,7 +99,7 @@ func (db *MemDb) getCounter(objType wire.ObjectType) *counter {
 	}
 }
 
-// Close cleanly shuts down database.  This is part of the database.Db interface
+// Close cleanly shuts down database. This is part of the database.Db interface
 // implementation.
 //
 // All data is purged upon close with this implementation since it is a
@@ -127,8 +127,8 @@ func (db *MemDb) Close() error {
 // exists in the database. This is part of the database.Db interface
 // implementation.
 func (db *MemDb) ExistsObject(hash *wire.ShaHash) (bool, error) {
-	db.Lock()
-	defer db.Unlock()
+	db.RLock()
+	defer db.RUnlock()
 
 	if db.closed {
 		return false, database.ErrDbClosed
@@ -157,8 +157,8 @@ func (db *MemDb) fetchObjectByHash(hash *wire.ShaHash) ([]byte, error) {
 // This implementation does not use any additional cache since the entire
 // database is already in memory.
 func (db *MemDb) FetchObjectByHash(hash *wire.ShaHash) ([]byte, error) {
-	db.Lock()
-	defer db.Unlock()
+	db.RLock()
+	defer db.RUnlock()
 
 	if db.closed {
 		return nil, database.ErrDbClosed
@@ -176,8 +176,8 @@ func (db *MemDb) FetchObjectByHash(hash *wire.ShaHash) ([]byte, error) {
 // database is already in memory.
 func (db *MemDb) FetchObjectByCounter(objType wire.ObjectType,
 	counter uint64) ([]byte, error) {
-	db.Lock()
-	defer db.Unlock()
+	db.RLock()
+	defer db.RUnlock()
 	if db.closed {
 		return nil, database.ErrDbClosed
 	}
@@ -194,19 +194,19 @@ func (db *MemDb) FetchObjectByCounter(objType wire.ObjectType,
 	return obj, nil
 }
 
-// FetchObjectsFromCounter returns objects from the database, which have a
-// counter value starting from `counter' and a type of `objType` as a slice of
-// byte slices with the counter of the last object. Objects are guaranteed to be
-// returned in order of increasing counter. The implementation may cache the
-// underlying data if desired. This is part of the database.Db interface
-// implementation.
+// FetchObjectsFromCounter returns a map of `count' objects which have a
+// counter position starting from `counter'. Key is the value of counter and
+// value is a byte slice containing the object. It also returns the counter
+// value of the last object, which could be useful for more queries to the
+// function. The implementation may cache the underlying data if desired.
+// This is part of the database.Db interface implementation.
 //
 // This implementation does not use any additional cache since the entire
 // database is already in memory.
 func (db *MemDb) FetchObjectsFromCounter(objType wire.ObjectType, counter uint64,
-	count uint64) ([][]byte, uint64, error) {
-	db.Lock()
-	defer db.Unlock()
+	count uint64) (map[uint64][]byte, uint64, error) {
+	db.RLock()
+	defer db.RUnlock()
 	if db.closed {
 		return nil, 0, database.ErrDbClosed
 	}
@@ -235,7 +235,7 @@ func (db *MemDb) FetchObjectsFromCounter(objType wire.ObjectType, counter uint64
 		newCounter = keys[count-1] // Get counter'th element
 		keys = keys[:count]        // we don't need excess elements
 	}
-	objects := make([][]byte, 0, count)
+	objects := make(map[uint64][]byte)
 
 	// start fetching objects in ascending order
 	for _, v := range keys {
@@ -248,8 +248,8 @@ func (db *MemDb) FetchObjectsFromCounter(objType wire.ObjectType, counter uint64
 		// ensure that database and returned byte arrays are separate
 		objCopy := make([]byte, len(obj))
 		copy(objCopy, obj)
-		// append object to output
-		objects = append(objects, objCopy)
+
+		objects[v] = objCopy
 	}
 
 	return objects, newCounter, nil
@@ -258,12 +258,12 @@ func (db *MemDb) FetchObjectsFromCounter(objType wire.ObjectType, counter uint64
 // FetchIdentityByAddress returns identity.Public stored in the form
 // of a PubKey message in the pubkey database. It needs to go through all the
 // public keys in the database to find this. The implementation must thus cache
-// results, if needed.
+// results, if needed. This is part of the database.Db interface implementation.
 func (db *MemDb) FetchIdentityByAddress(addr *bmutil.Address) (*identity.Public,
 	error) {
 
-	db.Lock()
-	defer db.Unlock()
+	db.RLock()
+	defer db.RUnlock()
 	if db.closed {
 		return nil, database.ErrDbClosed
 	}
@@ -289,6 +289,7 @@ func (db *MemDb) FetchIdentityByAddress(addr *bmutil.Address) (*identity.Public,
 			}
 		case wire.EncryptedPubKeyVersion:
 			if bytes.Equal(msg.Tag.Bytes(), addr.Tag()) { // decrypt this key
+				// TODO
 				return nil, database.ErrNotImplemented
 			}
 		default:
@@ -306,11 +307,13 @@ func (db *MemDb) FetchIdentityByAddress(addr *bmutil.Address) (*identity.Public,
 // sparingly and ensure that only a few objects can match.
 //
 // WARNING: filter must not mutate the object and/or its inventory hash.
+//
+// This is part of the database.Db interface implementation.
 func (db *MemDb) FilterObjects(filter func(hash *wire.ShaHash,
 	obj []byte) bool) (map[wire.ShaHash][]byte, error) {
 
-	db.Lock()
-	defer db.Unlock()
+	db.RLock()
+	defer db.RUnlock()
 	if db.closed {
 		return nil, database.ErrDbClosed
 	}
@@ -337,11 +340,13 @@ func (db *MemDb) FilterObjects(filter func(hash *wire.ShaHash,
 // inventory hashes that have already been sent out to a particular node.
 //
 // WARNING: filter must not mutate the object and/or its inventory hash.
+//
+// This is part of the database.Db interface implementation.
 func (db *MemDb) FetchRandomInvHashes(count uint64,
 	filter func(*wire.ShaHash, []byte) bool) ([]wire.ShaHash, error) {
 
-	db.Lock()
-	defer db.Unlock()
+	db.RLock()
+	defer db.RUnlock()
 	if db.closed {
 		return nil, database.ErrDbClosed
 	}
@@ -365,10 +370,10 @@ func (db *MemDb) FetchRandomInvHashes(count uint64,
 }
 
 // GetCounter returns the highest value of counter that exists for objects
-// of the given type.
+// of the given type. This is part of the database.Db interface implementation.
 func (db *MemDb) GetCounter(objType wire.ObjectType) (uint64, error) {
-	db.Lock()
-	defer db.Unlock()
+	db.RLock()
+	defer db.RUnlock()
 	if db.closed {
 		return 0, database.ErrDbClosed
 	}
@@ -382,7 +387,7 @@ func (db *MemDb) GetCounter(objType wire.ObjectType) (uint64, error) {
 // position (if object type has a counter associated with it). If the object
 // is a PubKey, it inserts it into a separate place where it isn't touched
 // by RemoveObject or RemoveExpiredObjects and has to be removed using
-// RemovePubKey.
+// RemovePubKey. This is part of the database.Db interface implementation.
 func (db *MemDb) InsertObject(data []byte) (uint64, error) {
 	db.Lock()
 	defer db.Unlock()
@@ -391,7 +396,7 @@ func (db *MemDb) InsertObject(data []byte) (uint64, error) {
 	}
 
 	_, _, objType, _, _, err := wire.DecodeMsgObjectHeader(bytes.NewReader(data))
-	if err != nil { // impossible, all objects must be valid
+	if err != nil { // all objects must be valid
 		return 0, err
 	}
 
@@ -441,6 +446,7 @@ doneInsert: // label used because normal insertion should still succeed
 }
 
 // RemoveObject removes the object with the specified hash from the database.
+// This is part of the database.Db interface implementation.
 func (db *MemDb) RemoveObject(hash *wire.ShaHash) error {
 	db.Lock()
 	defer db.Unlock()
@@ -473,7 +479,7 @@ func (db *MemDb) RemoveObject(hash *wire.ShaHash) error {
 }
 
 // RemoveObjectByCounter removes the object with the specified counter value
-// from the database.
+// from the database. This is part of the database.Db interface implementation.
 func (db *MemDb) RemoveObjectByCounter(objType wire.ObjectType,
 	counter uint64) error {
 
@@ -496,7 +502,8 @@ func (db *MemDb) RemoveObjectByCounter(objType wire.ObjectType,
 
 // RemoveExpiredObjects prunes all objects in the main circulation store
 // whose expiry time has passed (along with a margin of 3 hours). This does
-// not touch the pubkeys stored in the public key collection.
+// not touch the pubkeys stored in the public key collection. This is part of
+// the database.Db interface implementation.
 func (db *MemDb) RemoveExpiredObjects() error {
 	db.Lock()
 	defer db.Unlock()
@@ -530,7 +537,8 @@ func (db *MemDb) RemoveExpiredObjects() error {
 
 // RemovePubKey removes a PubKey from the PubKey store with the specified
 // tag. Note that it doesn't touch the general object store and won't remove
-// the public key from there.
+// the public key from there. This is part of the database.Db interface
+// implementation.
 func (db *MemDb) RemovePubKey(tag *wire.ShaHash) error {
 	db.Lock()
 	defer db.Unlock()

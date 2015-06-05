@@ -120,7 +120,7 @@ func (om *ObjectManager) handleObjectMsg(omsg *objectMsg) {
 		// an attack by checking that objects came from peers that we requested
 		// from.
 		peerLog.Errorf(omsg.peer.peer.PrependAddr(
-			fmt.Sprint("Disconnecting because of unrequested object ",
+			fmt.Sprint("Disconnecting because unrequested object ",
 				invVect.Hash.String()[:8], " received.")))
 		omsg.peer.disconnect()
 		return
@@ -128,15 +128,35 @@ func (om *ObjectManager) handleObjectMsg(omsg *objectMsg) {
 
 	delete(om.requestedObjects, *invVect)
 
-	// check PoW
+	// Check PoW.
 	obj := wire.EncodeMessage(omsg.object)
-	if pow.Check(obj, pow.DefaultExtraBytes, pow.DefaultNonceTrialsPerByte,
+	if !pow.Check(obj, pow.DefaultExtraBytes, pow.DefaultNonceTrialsPerByte,
 		time.Now()) {
-		om.server.db.InsertObject(obj)
+		return // invalid PoW
 	}
 
+	om.handleInsert(obj, invVect)
+
 	peerLog.Debugf(omsg.peer.peer.PrependAddr(fmt.Sprint("Object ", invVect.Hash.String()[:8], " received.")))
+}
+
+func (om *ObjectManager) handleInsert(obj []byte, invVect *wire.InvVect) uint64 {
+	// Insert object into database.
+	counter, err := om.server.db.InsertObject(obj)
+	if err != nil {
+		dbLog.Errorf("failed to insert object: %v", err)
+		return 0
+	}
+
+	// Notify RPC server
+	if !cfg.DisableRPC {
+		om.server.rpcServer.NotifyObject(obj, counter)
+	}
+
+	// Advertise objects to other peers.
 	om.server.handleRelayInvMsg(invVect)
+
+	return counter
 }
 
 // haveInventory returns whether or not the inventory represented by the passed
