@@ -307,7 +307,8 @@ func newConfigParser(cfg *config, options flags.Options) *flags.Parser {
 }
 
 // loadConfig initializes and parses the config using a config file and command
-// line options.
+// line options. ignoreCL stands for ignore command line; meant to be used
+// during testing.
 //
 // The configuration proceeds as follows:
 // 	1) Start with a default config with sane settings
@@ -318,7 +319,7 @@ func newConfigParser(cfg *config, options flags.Options) *flags.Parser {
 // The above results in bmd functioning properly without any config settings
 // while still allowing the user to override settings with config files and
 // command line options. Command line options always take precedence.
-func loadConfig() (*config, []string, error) {
+func loadConfig(ignoreCL bool) (*config, []string, error) {
 	// Default config.
 	cfg := config{
 		ConfigFile:     defaultConfigFile,
@@ -341,12 +342,15 @@ func loadConfig() (*config, []string, error) {
 	// help message error can be ignored here since they will be caught by
 	// the final parse below.
 	preCfg := cfg
-	preParser := newConfigParser(&preCfg, flags.HelpFlag)
-	_, err := preParser.Parse()
-	if err != nil {
-		if e, ok := err.(*flags.Error); ok && e.Type == flags.ErrHelp {
-			fmt.Fprintln(os.Stderr, err)
-			return nil, nil, err
+	var err error
+	if !ignoreCL {
+		preParser := newConfigParser(&preCfg, flags.HelpFlag)
+		_, err = preParser.Parse()
+		if err != nil {
+			if e, ok := err.(*flags.Error); ok && e.Type == flags.ErrHelp {
+				fmt.Fprintln(os.Stderr, err)
+				return nil, nil, err
+			}
 		}
 	}
 
@@ -364,7 +368,7 @@ func loadConfig() (*config, []string, error) {
 	parser := newConfigParser(&cfg, flags.Default)
 	if preCfg.ConfigFile != defaultConfigFile {
 
-		err := flags.NewIniParser(parser).ParseFile(preCfg.ConfigFile)
+		err = flags.NewIniParser(parser).ParseFile(preCfg.ConfigFile)
 		if err != nil {
 			if _, ok := err.(*os.PathError); !ok {
 				fmt.Fprintf(os.Stderr, "Error parsing config "+
@@ -376,13 +380,16 @@ func loadConfig() (*config, []string, error) {
 		}
 	}
 
-	// Parse command line options again to ensure they take precedence.
-	remainingArgs, err := parser.Parse()
-	if err != nil {
-		if e, ok := err.(*flags.Error); !ok || e.Type != flags.ErrHelp {
-			fmt.Fprintln(os.Stderr, usageMessage)
+	var remainingArgs []string
+	if !ignoreCL {
+		// Parse command line options again to ensure they take precedence.
+		remainingArgs, err = parser.Parse()
+		if err != nil {
+			if e, ok := err.(*flags.Error); !ok || e.Type != flags.ErrHelp {
+				fmt.Fprintln(os.Stderr, usageMessage)
+			}
+			return nil, nil, err
 		}
-		return nil, nil, err
 	}
 
 	// Create the home directory if it doesn't already exist.

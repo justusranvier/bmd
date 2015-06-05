@@ -911,7 +911,7 @@ func TestOutboundPeerHandshake(t *testing.T) {
 
 	// Load config.
 	var err error
-	cfg, _, err = loadConfig()
+	cfg, _, err = loadConfig(true)
 	if err != nil {
 		t.Fatalf("Config failed to load.")
 	}
@@ -1018,7 +1018,7 @@ func TestInboundPeerHandshake(t *testing.T) {
 
 	// Load config.
 	var err error
-	cfg, _, err = loadConfig()
+	cfg, _, err = loadConfig(true)
 	if err != nil {
 		t.Fatalf("Config failed to load.")
 	}
@@ -1122,7 +1122,7 @@ func TestProcessAddr(t *testing.T) {
 
 	// Load config.
 	var err error
-	cfg, _, err = loadConfig()
+	cfg, _, err = loadConfig(true)
 	if err != nil {
 		t.Fatalf("Config failed to load.")
 	}
@@ -1326,7 +1326,7 @@ func TestProcessInvAndObjectExchange(t *testing.T) {
 
 	// Load config.
 	var err error
-	cfg, _, err = loadConfig()
+	cfg, _, err = loadConfig(true)
 	if err != nil {
 		t.Fatalf("Config failed to load.")
 	}
