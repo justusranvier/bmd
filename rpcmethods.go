@@ -5,7 +5,6 @@
 package main
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
@@ -82,27 +81,26 @@ func (s *rpcServer) sendObject(client *rpc2.Client, in string, counter *uint64) 
 	}
 
 	// Check whether the object is valid.
-	_, expiresTime, _, _, stream, err := wire.DecodeMsgObjectHeader(bytes.NewReader(data))
+	obj, err := wire.DecodeMsgObject(data)
 	if err != nil {
 		return fmt.Errorf("invalid object: %v", err)
 	}
-	if time.Now().After(expiresTime) { // already expired
+	if time.Now().After(obj.ExpiresTime) { // already expired
 		return errors.New("object already expired")
 	}
-	if stream != 1 { // TODO improve
+	if obj.StreamNumber != 1 { // TODO improve
 		return errors.New("invalid stream")
 	}
 
 	// Check whether the PoW is valid.
-	if !pow.Check(data, pow.DefaultExtraBytes, pow.DefaultNonceTrialsPerByte,
+	if !pow.Check(obj, pow.DefaultExtraBytes, pow.DefaultNonceTrialsPerByte,
 		time.Now()) {
 		return errors.New("invalid proof of work")
 	}
 
 	// Relay object to object manager which will handle insertion and
 	// advertisement.
-	hash, _ := wire.NewShaHash(bmutil.CalcInventoryHash(data))
-	*counter = s.server.objectManager.handleInsert(data, wire.NewInvVect(hash))
+	*counter = s.server.objectManager.handleInsert(obj)
 	if *counter == 0 {
 		return errors.New("failed to insert and advertise object")
 	}
@@ -244,7 +242,7 @@ func (s *rpcServer) sendOldObjects(client *rpc2.Client, objType wire.ObjectType,
 
 	for counter, msg := range objs {
 		out := &RPCReceiveArgs{
-			Object:  base64.StdEncoding.EncodeToString(msg),
+			Object:  base64.StdEncoding.EncodeToString(wire.EncodeMessage(msg)),
 			Counter: counter,
 		}
 		// Send objects to client. Terminate all requests if one fails.

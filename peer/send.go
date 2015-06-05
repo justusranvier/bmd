@@ -335,16 +335,10 @@ func NewSend(inventory *Inventory, db database.Db) Send {
 // retrieveObject retrieves an object from the database and decodes it.
 // TODO we actually end up decoding the message and then encoding it again when
 // it is sent. That is not necessary.
-func retrieveObject(db database.Db, inv *wire.InvVect) wire.Message {
+func retrieveObject(db database.Db, inv *wire.InvVect) *wire.MsgObject {
 	obj, err := db.FetchObjectByHash(&inv.Hash)
 	if err != nil {
 		return nil
 	}
-
-	msg, err := wire.DecodeMsgObject(obj)
-	if err != nil {
-		return nil
-	}
-
-	return msg
+	return obj
 }

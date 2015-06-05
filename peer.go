@@ -217,11 +217,7 @@ func (p *bmpeer) PushObjectMsg(sha *wire.ShaHash) {
 		return
 	}
 
-	msg, err := wire.DecodeMsgObject(obj)
-	if err != nil {
-		return
-	}
-	p.QueueMessage(msg)
+	p.QueueMessage(obj)
 }
 
 // PushAddrMsg sends one, or more, addr message(s) to the connected peer using
@@ -399,7 +395,7 @@ func (p *bmpeer) HandleGetDataMsg(msg *wire.MsgGetData) error {
 
 // HandleObjectMsg updates the peer's request list and sends the object to
 // the object manager.
-func (p *bmpeer) HandleObjectMsg(msg wire.Message) error {
+func (p *bmpeer) HandleObjectMsg(msg *wire.MsgObject) error {
 	if !p.HandshakeComplete() {
 		return errors.New("Handshake not complete.")
 	}
@@ -468,7 +464,7 @@ func (p *bmpeer) handleInitialConnection() {
 
 	// Send a big inv message.
 	hashes, _ := p.server.db.FetchRandomInvHashes(wire.MaxInvPerMsg,
-		func(*wire.ShaHash, []byte) bool { return true })
+		func(*wire.ShaHash, *wire.MsgObject) bool { return true })
 	invVectList := make([]*wire.InvVect, len(hashes))
 	for i, hash := range hashes {
 		invVectList[i] = &wire.InvVect{Hash: hash}

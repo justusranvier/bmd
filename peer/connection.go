@@ -93,7 +93,7 @@ func (pc *connection) ReadMessage() (wire.Message, error) {
 	pc.receivedMtx.Unlock()
 
 	if err != nil {
-		if pc.conn == nil { //Connection might have been closed while reading.
+		if pc.conn == nil { // Connection might have been closed while reading.
 			return nil, nil
 		}
 		pc.Close()

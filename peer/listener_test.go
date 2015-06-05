@@ -112,9 +112,11 @@ func TestConnectionAndListener(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Error returned reading message.")
 		}
+		msgObj, _ := wire.ToMsgObject(msg)
+		hashtest := msgObj.InventoryHash()
 
-		hashtest := wire.MessageHash(msg)
-		hashexp := wire.MessageHash(message1)
+		expObj, _ := wire.ToMsgObject(message1)
+		hashexp := expObj.InventoryHash()
 
 		if !hashexp.IsEqual(hashtest) {
 			t.Errorf("Wrong mock connection somehow returned?")
@@ -165,8 +167,11 @@ func TestConnectionAndListener(t *testing.T) {
 	// Write a message to the connection.
 	msg := mockConn.MockRead()
 
-	hashtest := wire.MessageHash(msg)
-	hashexp := wire.MessageHash(message2)
+	msgObj, _ := wire.ToMsgObject(msg)
+	hashtest := msgObj.InventoryHash()
+
+	expObj, _ := wire.ToMsgObject(message2)
+	hashexp := expObj.InventoryHash()
 
 	if !hashexp.IsEqual(hashtest) {
 		t.Errorf("Wrong message sent.")

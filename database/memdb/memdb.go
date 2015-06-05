@@ -9,7 +9,6 @@ package memdb
 
 import (
 	"bytes"
-	"fmt"
 	"sort"
 	"sync"
 	"time"
@@ -18,10 +17,6 @@ import (
 	"github.com/monetas/bmutil"
 	"github.com/monetas/bmutil/identity"
 	"github.com/monetas/bmutil/wire"
-)
-
-const (
-	panicMessage = "ALIEN INVASION IN PROGRESS. (bug)"
 )
 
 // counters type serves to enable sorting of uint64 slices using sort.Sort
@@ -62,11 +57,11 @@ type MemDb struct {
 	sync.RWMutex
 
 	// objectsByHash keeps track of unexpired objects by their inventory hash.
-	objectsByHash map[wire.ShaHash][]byte
+	objectsByHash map[wire.ShaHash]*wire.MsgObject
 
 	// pubkeyByTag keeps track of all public keys (even expired) by their
 	// tag (which can be calculated from the address).
-	pubKeyByTag map[wire.ShaHash][]byte
+	pubKeyByTag map[wire.ShaHash]*wire.MsgPubKey
 
 	// counters for respective object types.
 	msgCounter       *counter
@@ -142,7 +137,7 @@ func (db *MemDb) ExistsObject(hash *wire.ShaHash) (bool, error) {
 }
 
 // No locks here, meant to be used inside public facing functions.
-func (db *MemDb) fetchObjectByHash(hash *wire.ShaHash) ([]byte, error) {
+func (db *MemDb) fetchObjectByHash(hash *wire.ShaHash) (*wire.MsgObject, error) {
 	if object, exists := db.objectsByHash[*hash]; exists {
 		return object, nil
 	}
@@ -156,7 +151,7 @@ func (db *MemDb) fetchObjectByHash(hash *wire.ShaHash) ([]byte, error) {
 //
 // This implementation does not use any additional cache since the entire
 // database is already in memory.
-func (db *MemDb) FetchObjectByHash(hash *wire.ShaHash) ([]byte, error) {
+func (db *MemDb) FetchObjectByHash(hash *wire.ShaHash) (*wire.MsgObject, error) {
 	db.RLock()
 	defer db.RUnlock()
 
@@ -175,7 +170,7 @@ func (db *MemDb) FetchObjectByHash(hash *wire.ShaHash) ([]byte, error) {
 // This implementation does not use any additional cache since the entire
 // database is already in memory.
 func (db *MemDb) FetchObjectByCounter(objType wire.ObjectType,
-	counter uint64) ([]byte, error) {
+	counter uint64) (*wire.MsgObject, error) {
 	db.RLock()
 	defer db.RUnlock()
 	if db.closed {
@@ -187,10 +182,7 @@ func (db *MemDb) FetchObjectByCounter(objType wire.ObjectType,
 	if !ok {
 		return nil, database.ErrNonexistentObject
 	}
-	obj, err := db.fetchObjectByHash(hash)
-	if err != nil {
-		panic(panicMessage)
-	}
+	obj, _ := db.fetchObjectByHash(hash)
 	return obj, nil
 }
 
@@ -204,7 +196,7 @@ func (db *MemDb) FetchObjectByCounter(objType wire.ObjectType,
 // This implementation does not use any additional cache since the entire
 // database is already in memory.
 func (db *MemDb) FetchObjectsFromCounter(objType wire.ObjectType, counter uint64,
-	count uint64) (map[uint64][]byte, uint64, error) {
+	count uint64) (map[uint64]*wire.MsgObject, uint64, error) {
 	db.RLock()
 	defer db.RUnlock()
 	if db.closed {
@@ -235,21 +227,13 @@ func (db *MemDb) FetchObjectsFromCounter(objType wire.ObjectType, counter uint64
 		newCounter = keys[count-1] // Get counter'th element
 		keys = keys[:count]        // we don't need excess elements
 	}
-	objects := make(map[uint64][]byte)
+	objects := make(map[uint64]*wire.MsgObject)
 
 	// start fetching objects in ascending order
 	for _, v := range keys {
 		hash := counterMap.ByCounter[v]
-		obj, err := db.fetchObjectByHash(hash)
-		// error checking
-		if err != nil {
-			panic(panicMessage)
-		}
-		// ensure that database and returned byte arrays are separate
-		objCopy := make([]byte, len(obj))
-		copy(objCopy, obj)
-
-		objects[v] = objCopy
+		obj, _ := db.fetchObjectByHash(hash)
+		objects[v] = obj.Copy()
 	}
 
 	return objects, newCounter, nil
@@ -268,14 +252,7 @@ func (db *MemDb) FetchIdentityByAddress(addr *bmutil.Address) (*identity.Public,
 		return nil, database.ErrDbClosed
 	}
 
-	for tag, obj := range db.pubKeyByTag {
-		msg := new(wire.MsgPubKey)
-		err := msg.Decode(bytes.NewReader(obj))
-		if err != nil {
-			return nil, fmt.Errorf("while decoding pubkey with tag %x,"+
-				" got error %v", tag, err)
-		}
-
+	for _, msg := range db.pubKeyByTag {
 		switch msg.Version {
 		case wire.SimplePubKeyVersion:
 			fallthrough
@@ -310,7 +287,7 @@ func (db *MemDb) FetchIdentityByAddress(addr *bmutil.Address) (*identity.Public,
 //
 // This is part of the database.Db interface implementation.
 func (db *MemDb) FilterObjects(filter func(hash *wire.ShaHash,
-	obj []byte) bool) (map[wire.ShaHash][]byte, error) {
+	obj *wire.MsgObject) bool) (map[wire.ShaHash]*wire.MsgObject, error) {
 
 	db.RLock()
 	defer db.RUnlock()
@@ -318,13 +295,10 @@ func (db *MemDb) FilterObjects(filter func(hash *wire.ShaHash,
 		return nil, database.ErrDbClosed
 	}
 
-	res := make(map[wire.ShaHash][]byte)
-	for hash, obj := range db.objectsByHash {
-		if filter(&hash, obj) { // we need this
-			objCopy := make([]byte, len(obj))
-			copy(objCopy, obj)
-
-			res[hash] = objCopy
+	res := make(map[wire.ShaHash]*wire.MsgObject)
+	for hash, msg := range db.objectsByHash {
+		if filter(&hash, msg) { // we need this
+			res[hash] = msg.Copy()
 		}
 	}
 
@@ -343,7 +317,7 @@ func (db *MemDb) FilterObjects(filter func(hash *wire.ShaHash,
 //
 // This is part of the database.Db interface implementation.
 func (db *MemDb) FetchRandomInvHashes(count uint64,
-	filter func(*wire.ShaHash, []byte) bool) ([]wire.ShaHash, error) {
+	filter func(*wire.ShaHash, *wire.MsgObject) bool) ([]wire.ShaHash, error) {
 
 	db.RLock()
 	defer db.RUnlock()
@@ -388,59 +362,51 @@ func (db *MemDb) GetCounter(objType wire.ObjectType) (uint64, error) {
 // is a PubKey, it inserts it into a separate place where it isn't touched
 // by RemoveObject or RemoveExpiredObjects and has to be removed using
 // RemovePubKey. This is part of the database.Db interface implementation.
-func (db *MemDb) InsertObject(data []byte) (uint64, error) {
+func (db *MemDb) InsertObject(obj *wire.MsgObject) (uint64, error) {
 	db.Lock()
 	defer db.Unlock()
 	if db.closed {
 		return 0, database.ErrDbClosed
 	}
 
-	_, _, objType, _, _, err := wire.DecodeMsgObjectHeader(bytes.NewReader(data))
-	if err != nil { // all objects must be valid
-		return 0, err
-	}
-
-	hash, _ := wire.NewShaHash(bmutil.CalcInventoryHash(data))
-
-	// ensure that modifying input args doesn't change contents in database
-	dataInsert := make([]byte, len(data))
-	copy(dataInsert, data)
+	hash := obj.InventoryHash()
 
 	// handle pubkeys
-	if objType == wire.ObjectTypePubKey {
-		msg := new(wire.MsgPubKey)
-		err = msg.Decode(bytes.NewReader(data))
+	if obj.ObjectType == wire.ObjectTypePubKey {
+		pubkeyMsg := new(wire.MsgPubKey)
+		err := pubkeyMsg.Decode(bytes.NewReader(wire.EncodeMessage(pubkeyMsg)))
 		if err != nil {
 			goto doneInsert // fail silently
 		}
 
 		var tag []byte
 
-		switch msg.Version {
+		switch pubkeyMsg.Version {
 		case wire.SimplePubKeyVersion:
 			fallthrough
 		case wire.ExtendedPubKeyVersion:
-			id, err := identity.FromPubKeyMsg(msg)
+			id, err := identity.FromPubKeyMsg(pubkeyMsg)
 			if err != nil { // invalid encryption/signing keys
 				goto doneInsert
 			}
 			tag = id.Address.Tag()
 		case wire.EncryptedPubKeyVersion:
-			tag = msg.Tag.Bytes() // directly included
+			tag = pubkeyMsg.Tag.Bytes() // directly included
 		}
 		tagH, err := wire.NewShaHash(tag)
 		if err != nil {
 			goto doneInsert
 		}
-		db.pubKeyByTag[*tagH] = dataInsert // insert pubkey
+		db.pubKeyByTag[*tagH] = pubkeyMsg // insert pubkey
 	}
 
 doneInsert: // label used because normal insertion should still succeed
+
 	// insert object into the object hash table
-	db.objectsByHash[*hash] = dataInsert
+	db.objectsByHash[*hash] = obj.Copy()
 
 	// increment counter
-	counterMap := db.getCounter(objType)
+	counterMap := db.getCounter(obj.ObjectType)
 	counterMap.Insert(hash)
 	return counterMap.CounterPos, nil
 }
@@ -460,11 +426,8 @@ func (db *MemDb) RemoveObject(hash *wire.ShaHash) error {
 	}
 
 	// check and remove object from counter maps
-	_, _, objType, _, _, err := wire.DecodeMsgObjectHeader(bytes.NewReader(obj))
-	counterMap := db.getCounter(objType)
-	if err != nil { // impossible, all objects must be valid
-		panic(panicMessage)
-	}
+	counterMap := db.getCounter(obj.ObjectType)
+
 	for k, v := range counterMap.ByCounter { // go through each element
 		if v.IsEqual(hash) { // we got a match, so delete
 			delete(counterMap.ByCounter, k)
@@ -512,14 +475,10 @@ func (db *MemDb) RemoveExpiredObjects() error {
 	}
 
 	for hash, obj := range db.objectsByHash {
-		_, expiresTime, objType, _, _, err := wire.DecodeMsgObjectHeader(bytes.NewReader(obj))
-		if err != nil { // impossible, all objects must be valid
-			panic(panicMessage)
-		}
 		// current time - 3 hours
-		if time.Now().Add(-time.Hour * 3).After(expiresTime) { // expired
+		if time.Now().Add(-time.Hour * 3).After(obj.ExpiresTime) { // expired
 			// remove from counter map
-			counterMap := db.getCounter(objType)
+			counterMap := db.getCounter(obj.ObjectType)
 
 			for k, v := range counterMap.ByCounter { // go through each element
 				if v.IsEqual(&hash) { // we got a match, so delete
@@ -591,8 +550,8 @@ func (db *MemDb) Sync() error {
 // newMemDb returns a new memory-only database ready for block inserts.
 func newMemDb() *MemDb {
 	db := MemDb{
-		objectsByHash:     make(map[wire.ShaHash][]byte),
-		pubKeyByTag:       make(map[wire.ShaHash][]byte),
+		objectsByHash:     make(map[wire.ShaHash]*wire.MsgObject),
+		pubKeyByTag:       make(map[wire.ShaHash]*wire.MsgPubKey),
 		msgCounter:        &counter{make(map[uint64]*wire.ShaHash), 0},
 		broadcastCounter:  &counter{make(map[uint64]*wire.ShaHash), 0},
 		pubKeyCounter:     &counter{make(map[uint64]*wire.ShaHash), 0},

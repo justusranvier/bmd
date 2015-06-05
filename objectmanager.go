@@ -44,7 +44,7 @@ type newPeerMsg struct {
 // objectMsg packages a bitmessage object message and the peer it came from
 // together so the object manager has access to that information.
 type objectMsg struct {
-	object wire.Message
+	object *wire.MsgObject
 	peer   *bmpeer
 }
 
@@ -109,8 +109,7 @@ func (om *ObjectManager) handleDonePeerMsg(peers map[*bmpeer]struct{}, p *bmpeer
 
 // handleObjectMsg handles object messages from all peers.
 func (om *ObjectManager) handleObjectMsg(omsg *objectMsg) {
-	invHash := wire.MessageHash(omsg.object)
-	invVect := wire.NewInvVect(invHash)
+	invVect := wire.NewInvVect(omsg.object.InventoryHash())
 
 	// Unrequested data means disconnect.
 	if p, exists := om.requestedObjects[*invVect]; !exists || p.peer != omsg.peer {
@@ -129,18 +128,17 @@ func (om *ObjectManager) handleObjectMsg(omsg *objectMsg) {
 	delete(om.requestedObjects, *invVect)
 
 	// Check PoW.
-	obj := wire.EncodeMessage(omsg.object)
-	if !pow.Check(obj, pow.DefaultExtraBytes, pow.DefaultNonceTrialsPerByte,
-		time.Now()) {
+	if !pow.Check(omsg.object, pow.DefaultExtraBytes,
+		pow.DefaultNonceTrialsPerByte, time.Now()) {
 		return // invalid PoW
 	}
 
-	om.handleInsert(obj, invVect)
+	om.handleInsert(omsg.object)
 
 	peerLog.Debugf(omsg.peer.peer.PrependAddr(fmt.Sprint("Object ", invVect.Hash.String()[:8], " received.")))
 }
 
-func (om *ObjectManager) handleInsert(obj []byte, invVect *wire.InvVect) uint64 {
+func (om *ObjectManager) handleInsert(obj *wire.MsgObject) uint64 {
 	// Insert object into database.
 	counter, err := om.server.db.InsertObject(obj)
 	if err != nil {
@@ -154,7 +152,7 @@ func (om *ObjectManager) handleInsert(obj []byte, invVect *wire.InvVect) uint64 
 	}
 
 	// Advertise objects to other peers.
-	om.server.handleRelayInvMsg(invVect)
+	om.server.handleRelayInvMsg(wire.NewInvVect(obj.InventoryHash()))
 
 	return counter
 }
@@ -266,7 +264,7 @@ func (om *ObjectManager) NewPeer(p *bmpeer) {
 
 // QueueObject adds the passed object message and peer to the object handling
 // queue.
-func (om *ObjectManager) QueueObject(object wire.Message, p *bmpeer) {
+func (om *ObjectManager) QueueObject(object *wire.MsgObject, p *bmpeer) {
 	// Don't accept more objects if we're shutting down.
 	if atomic.LoadInt32(&om.shutdown) != 0 {
 		return
