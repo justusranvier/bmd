@@ -267,40 +267,12 @@ func TestSendMessage(t *testing.T) {
 	if queue.Running() {
 		t.Errorf("queue should not be running after this. ")
 	}
-	conn.SetFailure(false)
 
 	queue.Start(conn)
 
-	// Engineer a situation in which the message channel gets filled up
-	// and must be cleaned out.
-	i := 0
-	for {
-		err = queue.QueueMessage(&wire.MsgVerAck{})
-		if i == 20 {
-			break
-		}
-		if err != nil {
-			t.Error("Should not have got an error yet.")
-		}
-		i++
-	}
-	if err == nil {
-		t.Error("Should have got a queue full error.")
-	}
-
-	reset := make(chan struct{})
-	go func() {
-		for {
-			if conn.MockRead(reset) == nil {
-				break
-			}
-		}
-	}()
-
 	queue.Stop()
 	time.Sleep(time.Millisecond * 50)
-	//Start the queue again to make sure it shuts down properly before the test ends.
-	close(reset)
+
 }
 
 func TestRequestData(t *testing.T) {
@@ -359,49 +331,14 @@ func TestRequestData(t *testing.T) {
 		t.Errorf("Wrong message returned.")
 	}
 
-	// Engineer a situation in which the data request channel gets filled up
-	// and must be cleaned out.
-
-	i := 0
-	for {
-		objMsg := wire.NewMsgUnknownObject(666, time.Now(), wire.ObjectType(4), 1, 1, []byte{0, 0, 0, byte(i)})
-
-		msg, _ := wire.ToMsgObject(objMsg)
-		db.InsertObject(msg)
-		hashes := []*wire.InvVect{&wire.InvVect{Hash: *msg.InventoryHash()}}
-
-		err = queue.QueueDataRequest(hashes)
-		if i == 50 {
-			break
-		}
-		if err != nil {
-			t.Errorf("Should not have got an error yet on hash %d", i)
-		}
-		i++
-	}
-	if err == nil {
-		t.Error("Should have got a queue full error.")
-	}
-
-	time.Sleep(time.Millisecond * 50)
-
-	reset := make(chan struct{})
-	go func() {
-		for {
-			if conn.MockRead(reset) == nil {
-				break
-			}
-		}
-	}()
 	queue.Stop()
 
 	//Start the queue again to make sure it shuts down properly before the test ends.
 	queue.Start(conn)
-	close(reset)
 
 	// Engineer a situation in which the data channel gets filled up
 	// and must be cleaned out.
-	i = 0
+	i := 0
 	for {
 		objMsg := wire.NewMsgUnknownObject(555, time.Now(), wire.ObjectType(4), 1, 1, []byte{0, 0, 0, byte(i)})
 
@@ -418,20 +355,6 @@ func TestRequestData(t *testing.T) {
 		i++
 	}
 
-	queue.Stop()
-
-	reset = make(chan struct{})
-	go func() {
-		for {
-			if conn.MockRead(reset) == nil {
-				break
-			}
-		}
-	}()
-
-	//Start the queue again to make sure it shuts down properly before the test ends.
-	queue.Start(conn)
-	close(reset)
 	queue.Stop()
 }
 
@@ -482,9 +405,9 @@ func TestQueueInv(t *testing.T) {
 	// we call MockRead.
 	time.Sleep(time.Millisecond * 50)
 	timerChan <- time.Now()
-	/*msg := conn.MockRead(nil)
+	msg := conn.MockRead(nil)
 
-	/*switch msg.(type) {
+	switch msg.(type) {
 	case *wire.MsgInv:
 		invList := msg.(*wire.MsgInv).InvList
 		if !(len(invList) == 1 && invList[0] == inv) {
@@ -495,36 +418,11 @@ func TestQueueInv(t *testing.T) {
 	}
 
 	queue.Stop()
-	peer.TstSendStart(queue, conn)*/
-
-	// Fill up the channel.
-	/*i := 0
-	for {
-		invTrickleSize := 1
-		invList := make([]*wire.InvVect, invTrickleSize)
-		for j := 0; j < invTrickleSize; j++ {
-			invList[j] = &wire.InvVect{Hash: *randomShaHash()}
-		}
-		err = queue.QueueInventory(invList)
-		if i == 50 {
-			break
-		}
-		if err != nil {
-			t.Error("Should not have got an error yet on round ", i)
-		}
-		i++
-	}
-	if err == nil {
-		t.Error("Should have got a queue full error.")
-	}
-
-	peer.TstSendStartQueueHandler(queue, timer)
-	queue.Stop()
 
 	peer.TstSendStart(queue, conn)
 	peer.TstSendStartQueueHandler(queue, timer)
 
-	for i = 0; i < 6; i++ {
+	for i := 0; i < 6; i++ {
 		invTrickleSize := 1200
 		invList := make([]*wire.InvVect, invTrickleSize)
 		for j := 0; j < invTrickleSize; j++ {
@@ -552,7 +450,7 @@ func TestQueueInv(t *testing.T) {
 	peer.TstSendStart(queue, conn)
 	peer.TstSendStartQueueHandler(queue, timer)
 
-	for i = 0; i < 6; i++ {
+	for i := 0; i < 6; i++ {
 		invTrickleSize := 1200
 		invList := make([]*wire.InvVect, invTrickleSize)
 		for j := 0; j < invTrickleSize; j++ {
@@ -567,39 +465,29 @@ func TestQueueInv(t *testing.T) {
 	// Start and stop again to make sure the test doesn't end before the queue
 	// has shut down the last time.
 	peer.TstSendStart(queue, conn)
-	queue.Stop()*/
+	queue.Stop()
 }
 
-/*func TestRetrieveObject(t *testing.T) {
-	db := NewMockDb()
+func TestRetrieveObject(t *testing.T) {
+	db, _ := database.CreateDB("memdb")
 
 	// An object that is not in the database.
 	notThere := &wire.InvVect{Hash: *randomShaHash()}
 
-	// An invalid object that will be in the database (normally this should not happen).
-	badData := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 0}
-	hash, _ := wire.NewShaHash(bmutil.CalcInventoryHash(badData))
-	badInv := &wire.InvVect{Hash: *hash}
-	db.InsertObject(badData)
-
 	// A valid object that will be in the database.
-	message := wire.NewMsgUnknownObject(345, time.Now(), wire.ObjectType(4), 1, 1, []byte{77, 82, 53, 48, 96, 1})
-	goodData := wire.EncodeMessage(message)
-	goodInv := &wire.InvVect{Hash: *wire.MessageHash(message)}
+	goodData := wire.NewMsgUnknownObject(345, time.Now(),
+		wire.ObjectType(4), 1, 1, []byte{77, 82, 53, 48, 96, 1}).ToMsgObject()
+	goodInv := &wire.InvVect{Hash: *goodData.InventoryHash()}
 	db.InsertObject(goodData)
 
 	// Retrieve objects that are not in the database.
-	if peer.TstRetrieveObject(db, notThere) != nil {
-		t.Error("Object returned that should not have been in the database.")
-	}
-
-	// Retrieve invalid objects from the database.
-	if peer.TstRetrieveObject(db, badInv) != nil {
-		t.Error("Object returned that should have been detected to be invalid.")
+	obj := peer.TstRetrieveObject(db, notThere)
+	if obj != nil {
+		t.Error("Object returned that should not have been in the database: ", obj)
 	}
 
 	// Retrieve good objects from the database.
 	if peer.TstRetrieveObject(db, goodInv) == nil {
 		t.Error("No object returned.")
 	}
-}*/
+}

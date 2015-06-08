@@ -56,6 +56,8 @@ type bmpeer struct {
 	addr              net.Addr
 	na                *wire.NetAddress
 	inbound           bool
+	lastReceipt       time.Time
+	invReceived       bool
 	knownAddresses    map[string]struct{}
 	StatsMtx          sync.Mutex // protects all statistics below here.
 	versionKnown      bool
@@ -180,6 +182,9 @@ func (p *bmpeer) PushGetDataMsg(ivl []*wire.InvVect) {
 		return
 	}
 
+	p.inventory.AddRequest(len(ivl))
+	peerLog.Debug(p.peer.PrependAddr(fmt.Sprint(len(ivl), " requests assigned for a total of ", p.inventory.NumRequests(), ".")))
+
 	x := 0
 	for len(ivl)-x > wire.MaxInvPerMsg {
 		p.QueueMessage(&wire.MsgInv{InvList: ivl[x : x+wire.MaxInvPerMsg]})
@@ -191,6 +196,15 @@ func (p *bmpeer) PushGetDataMsg(ivl []*wire.InvVect) {
 		p.QueueMessage(&wire.MsgGetData{InvList: ivl[x:]})
 		peerLog.Debug(p.peer.PrependAddr(fmt.Sprint("Get data message sent with ", len(ivl)-x, " hashes.")))
 	}
+
+	// TODO the peer should signal the object manager when it is ready to download more.
+	// This can be done once the object manager downloads more intelligently.
+	/*if p.inventory.NumRequests() > cfg.MaxPeerRequests/2 {
+		p.signalReady = p.inventory.NumRequests() / 2
+	} else {
+		p.signalReady = 0
+		p.server.objectManager.ReadyPeer(p)
+	}*/
 }
 
 // PushInvMsg creates and sends an Inv message and sends it to the remote peer.
@@ -373,6 +387,15 @@ func (p *bmpeer) HandleInvMsg(msg *wire.MsgInv) error {
 	}
 
 	peerLog.Debug(p.peer.PrependAddr(fmt.Sprint("Inv received with ", len(msg.InvList), " hashes.")))
+
+	// If this is the first inv we've received,
+	// signal the object manager that a new peer has connected.
+	if !p.invReceived {
+		// Signal the object manager that a new peer has been connected.
+		p.server.objectManager.NewPeer(p)
+		p.invReceived = true
+	}
+
 	p.server.objectManager.QueueInv(msg, p)
 	p.server.addrManager.Connected(p.na)
 	return nil
@@ -404,6 +427,11 @@ func (p *bmpeer) HandleObjectMsg(msg *wire.MsgObject) error {
 	p.inventory.AddRequest(-1)
 
 	p.server.objectManager.QueueObject(msg, p)
+
+	// TODO signal object manager that we are ready to download more.
+	/*if p.signalReady == p.inventory.NumRequests() {
+		p.server.objectManager.ReadyPeer(p)
+	}*/
 	p.server.addrManager.Connected(p.na)
 
 	return nil
@@ -456,9 +484,6 @@ func (p *bmpeer) handleInitialConnection() {
 	p.StatsMtx.Lock()
 	p.handshakeComplete = true
 	p.StatsMtx.Unlock()
-
-	// Signal the object manager that a new peer has been connected.
-	p.server.objectManager.NewPeer(p)
 
 	// Send a big addr message.
 	p.PushAddrMsg(p.server.addrManager.AddressCache())

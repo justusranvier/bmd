@@ -38,6 +38,7 @@ var (
 	rpcLog     = btclog.Disabled
 	serverLog  = btclog.Disabled
 	dbLog      = btclog.Disabled
+	objmgrLog  = btclog.Disabled
 )
 
 // subsystemLoggers maps each subsystem identifier to its associated logger.
@@ -48,6 +49,7 @@ var subsystemLoggers = map[string]btclog.Logger{
 	"RPC":     rpcLog,
 	"SERVER":  serverLog,
 	"DB":      dbLog,
+	"OBJMGR":  objmgrLog,
 }
 
 // logClosure is used to provide a closure over expensive logging operations
@@ -96,6 +98,9 @@ func useLogger(subsystemID string, logger btclog.Logger) {
 	case "DB":
 		dbLog = logger
 		database.UseLogger(logger)
+
+	case "OBJMGR":
+		objmgrLog = logger
 	}
 }
 

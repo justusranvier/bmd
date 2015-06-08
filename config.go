@@ -40,6 +40,7 @@ const (
 	defaultMaxUpPerPeer   = 1024 * 1024 // 1MBps
 	defaultMaxDownPerPeer = 1024 * 1024
 	defaultMaxOutbound    = 10
+	defaultRequestTimeout = time.Minute * 3
 )
 
 var (
@@ -139,9 +140,10 @@ type config struct {
 	CPUProfile     string        `long:"cpuprofile" description:"Write CPU profile to the specified file"`
 	DebugLevel     string        `short:"d" long:"debuglevel" description:"Logging level for all subsystems {trace, debug, info, warn, error, critical} -- You may also specify <subsystem>=<level>,<subsystem2>=<level>,... to set the log level for individual subsystems -- Use show to list available subsystems"`
 	Upnp           bool          `long:"upnp" description:"Use UPnP to map our listening port outside of NAT"`
-	MaxUpPerPeer   Filesize      `long:"maxupload" description:"Maximum upload rate for any peer. Valid units are {B, K, M, G} bytes/sec."`
-	MaxDownPerPeer Filesize      `long:"maxdownload" description:"Maximum download rate for any peer. Valid units are {B, K, M, G} bytes/sec."`
-	MaxOutbound    int           `long:"maxoutbound" description:"The maximum number of outbound peers that bmd will try to maintain."`
+	MaxUpPerPeer   Filesize      `long:"maxupload" description:"Maximum upload rate for any peer. Valid units are {B, K, M, G} bytes/sec"`
+	MaxDownPerPeer Filesize      `long:"maxdownload" description:"Maximum download rate for any peer. Valid units are {B, K, M, G} bytes/sec"`
+	MaxOutbound    int           `long:"maxoutbound" description:"The maximum number of outbound peers that bmd will try to maintain"`
+	RequestExpire  time.Duration `long:"requestexpire" description:"Time to expire an object request and disconnect the peer assigned to it. Valid time units are {s, m, h}. Minimum 10 seconds"`
 	onionlookup    func(string) ([]net.IP, error)
 	lookup         func(string) ([]net.IP, error)
 	oniondial      func(string, string) (net.Conn, error)
@@ -335,6 +337,7 @@ func loadConfig(ignoreCL bool) (*config, []string, error) {
 		MaxDownPerPeer: defaultMaxDownPerPeer,
 		MaxUpPerPeer:   defaultMaxUpPerPeer,
 		MaxOutbound:    defaultMaxOutbound,
+		RequestExpire:  defaultRequestTimeout,
 	}
 
 	// Pre-parse the command line options to see if an alternative config
@@ -459,6 +462,15 @@ func loadConfig(ignoreCL bool) (*config, []string, error) {
 	if cfg.BanDuration < time.Duration(time.Second) {
 		str := "%s: The banduration option may not be less than 1s -- parsed [%v]"
 		err := fmt.Errorf(str, funcName, cfg.BanDuration)
+		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, usageMessage)
+		return nil, nil, err
+	}
+
+	// Don't allow request expire times that are too short.
+	if cfg.RequestExpire < time.Duration(10*time.Second) {
+		str := "%s: The requestexpire option may not be less than 10s -- parsed [%v]"
+		err := fmt.Errorf(str, funcName, cfg.RequestExpire)
 		fmt.Fprintln(os.Stderr, err)
 		fmt.Fprintln(os.Stderr, usageMessage)
 		return nil, nil, err

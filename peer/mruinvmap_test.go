@@ -27,26 +27,6 @@ func TestNew(t *testing.T) {
 	}
 }
 
-func TestString(t *testing.T) {
-	hasha, _ := wire.NewShaHash([]byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1})
-	hashb, _ := wire.NewShaHash([]byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 200})
-	a := &wire.InvVect{Hash: *hasha}
-	b := &wire.InvVect{Hash: *hashb}
-
-	m := peer.NewMruInventoryMap(2)
-	m.Add(a)
-	m.Add(b)
-
-	// No good way to actually test that the string comes out right.
-	str := m.String()
-	//t.Error("String expected:",str)
-
-	if str[:74] != "<2>map[{0000000000000000000000000000000000000000000000000000000000000001}:" &&
-		str[87:154] != "{00000000000000000000000000000000000000000000000000000000000000c8}:" {
-		t.Error("Incorrect string returned.")
-	}
-}
-
 // TestMruInvMap tests Exists, Add, and Delete.
 func TestMruInvMap(t *testing.T) {
 	a := &wire.InvVect{Hash: *randomShaHash()}
