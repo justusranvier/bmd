@@ -102,7 +102,7 @@ func (L *MockLogic) HandleGetDataMsg(*wire.MsgGetData) error {
 	return nil
 }
 
-func (L *MockLogic) HandleObjectMsg(wire.Message) error {
+func (L *MockLogic) HandleObjectMsg(*wire.MsgObject) error {
 	if L.Failure || L.Report(MessageTypeObject) {
 		return errors.New("Logic is set to return errors.")
 	}

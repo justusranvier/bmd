@@ -9,6 +9,7 @@ package database_test
 
 import (
 	"bytes"
+	"reflect"
 	"testing"
 	"time"
 
@@ -128,12 +129,6 @@ var testObj = [][]wire.Message{
 	},
 }
 
-func msgToBytes(msg wire.Message) []byte {
-	buf := &bytes.Buffer{}
-	msg.Encode(buf)
-	return buf.Bytes()
-}
-
 func testSync(tc *testContext) {
 	teardown := tc.newDb()
 	defer teardown()
@@ -149,22 +144,15 @@ func testObject(tc *testContext) {
 	teardown := tc.newDb()
 	defer teardown()
 
-	// test inserting invalid object
-	_, err := tc.db.InsertObject([]byte{0x00, 0x00})
-	if err == nil {
-		tc.t.Errorf("InsertObject (%s): inserting invalid object, expected"+
-			" error got none", tc.dbType)
-	}
-
 	for i, object := range testObj {
-		data := msgToBytes(object[0])
-		_, err := tc.db.InsertObject(data)
+		msg, _ := wire.ToMsgObject(object[0])
+		_, err := tc.db.InsertObject(msg)
 		if err != nil {
 			tc.t.Errorf("InsertObject (%s): object #%d,"+
 				" got error %v", tc.dbType, i, err)
 		}
 
-		hash, _ := wire.NewShaHash(bmutil.CalcInventoryHash(msgToBytes(object[0])))
+		hash := msg.InventoryHash()
 
 		exists, err := tc.db.ExistsObject(hash)
 		if err != nil {
@@ -176,12 +164,14 @@ func testObject(tc *testContext) {
 				" but it is not", tc.dbType, i)
 		}
 
-		testData, err := tc.db.FetchObjectByHash(hash)
+		testMsg, err := tc.db.FetchObjectByHash(hash)
+		testMsg.InventoryHash() // to make sure it's equal
+
 		if err != nil {
 			tc.t.Errorf("FetchObjectByHash (%s): object #%d, got error %v",
 				tc.dbType, i, err)
 		}
-		if !bytes.Equal(data, testData) {
+		if !reflect.DeepEqual(msg, testMsg) {
 			tc.t.Errorf("FetchObjectByHash (%s): object #%d,"+
 				" data does not match", tc.dbType, i)
 		}
@@ -250,8 +240,8 @@ func testCounter(tc *testContext) {
 		}
 
 		// Insert an element and make sure the counter comes out correct.
-		data := msgToBytes(testObj[i][0])
-		count, err = tc.db.InsertObject(data)
+		msg, _ := wire.ToMsgObject(testObj[i][0])
+		count, err = tc.db.InsertObject(msg)
 		if err != nil {
 			tc.t.Errorf("InsertObject (%s): object #%d #%d of type %s,"+
 				" got error %v", tc.dbType, i, 0, objType, err)
@@ -262,17 +252,20 @@ func testCounter(tc *testContext) {
 		}
 
 		// Try to fetch an object that should be there now.
-		testData, err := tc.db.FetchObjectByCounter(objType, 1)
+		testMsg, err := tc.db.FetchObjectByCounter(objType, 1)
+		testMsg.InventoryHash() // to make sure it's equal
+
 		if err != nil {
 			tc.t.Errorf("FetchObjectByCounter (%s): fetching object"+
 				" of type %s, got error %v", tc.dbType, objType, err)
 		}
-		if !bytes.Equal(testData, data) {
+		if !reflect.DeepEqual(testMsg, msg) {
 			tc.t.Errorf("FetchObjectByCounter (%s): data mismatch", tc.dbType)
 		}
 
-		data1 := msgToBytes(testObj[i][1])
-		count, err = tc.db.InsertObject(data1)
+		msg1, _ := wire.ToMsgObject(testObj[i][1])
+
+		count, err = tc.db.InsertObject(msg1)
 		if err != nil {
 			tc.t.Errorf("InsertObject (%s): object #%d #%d of type %s,"+
 				" got error %v", tc.dbType, i, 1, objType, err)
@@ -284,12 +277,14 @@ func testCounter(tc *testContext) {
 		}
 
 		// Try fetching the new object.
-		testData, err = tc.db.FetchObjectByCounter(objType, 2)
+		testMsg, err = tc.db.FetchObjectByCounter(objType, 2)
+		testMsg.InventoryHash() // to make sure it's equal
+
 		if err != nil {
 			tc.t.Errorf("FetchObjectByCounter (%s): fetching existing object"+
 				" of type %s, got error %v", tc.dbType, objType, err)
 		}
-		if !bytes.Equal(testData, data1) {
+		if !reflect.DeepEqual(testMsg, msg1) {
 			tc.t.Errorf("FetchObjectByCounter (%s): data mismatch", tc.dbType)
 		}
 
@@ -427,7 +422,7 @@ func testPubKey(tc *testContext) {
 	defer teardown()
 
 	// test inserting invalid public key
-	invalidPubkey := []byte{
+	invalidPubkeyBytes := []byte{
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x47, 0xd8, // 83928 nonce
 		0x00, 0x00, 0x00, 0x00, 0x49, 0x5f, 0xab, 0x29, // 64-bit Timestamp
 		0x00, 0x00, 0x00, 0x01, // Object Type
@@ -437,6 +432,8 @@ func testPubKey(tc *testContext) {
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Signing Key
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Encrypt Key
 	}
+	invalidPubkey := new(wire.MsgObject)
+	invalidPubkey.Decode(bytes.NewReader(invalidPubkeyBytes))
 	_, err := tc.db.InsertObject(invalidPubkey)
 	if err != nil {
 		tc.t.Errorf("InsertObject (%s): inserting invalid pubkey, got error %v",
@@ -491,32 +488,26 @@ func testFilters(tc *testContext) {
 
 	for _, messages := range testObj {
 		for _, message := range messages {
-			_, _ = tc.db.InsertObject(msgToBytes(message))
+			msg, _ := wire.ToMsgObject(message)
+			_, _ = tc.db.InsertObject(msg)
 		}
 	}
 
-	allFilter := func(*wire.ShaHash, []byte) bool {
+	allFilter := func(*wire.ShaHash, *wire.MsgObject) bool {
 		return true
 	}
-	noneFilter := func(*wire.ShaHash, []byte) bool {
+	noneFilter := func(*wire.ShaHash, *wire.MsgObject) bool {
 		return false
 	}
-	unknownObjFilter := func(hash *wire.ShaHash, obj []byte) bool {
-		msg := new(wire.MsgUnknownObject)
-		msg.Decode(bytes.NewReader(obj))
+	unknownObjFilter := func(hash *wire.ShaHash, msg *wire.MsgObject) bool {
 		if msg.ObjectType >= wire.ObjectType(4) {
 			return true
 		} else {
 			return false
 		}
 	}
-	expiredFilter := func(hash *wire.ShaHash, obj []byte) bool {
-		_, expiresTime, _, _, _, err := wire.DecodeMsgObjectHeader(
-			bytes.NewReader(obj))
-		if err != nil {
-			return false
-		}
-		if time.Now().Add(-time.Hour * 3).After(expiresTime) { // expired
+	expiredFilter := func(hash *wire.ShaHash, msg *wire.MsgObject) bool {
+		if time.Now().Add(-time.Hour * 3).After(msg.ExpiresTime) { // expired
 			return true
 		} else {
 			return false
@@ -525,7 +516,7 @@ func testFilters(tc *testContext) {
 
 	type randomInvHashesTest struct {
 		count         uint64
-		filterFunc    func(*wire.ShaHash, []byte) bool
+		filterFunc    func(*wire.ShaHash, *wire.MsgObject) bool
 		expectedCount int
 	}
 
@@ -553,7 +544,7 @@ func testFilters(tc *testContext) {
 	}
 
 	type filterObjectsTest struct {
-		filterFunc    func(*wire.ShaHash, []byte) bool
+		filterFunc    func(*wire.ShaHash, *wire.MsgObject) bool
 		expectedCount int
 	}
 
@@ -584,7 +575,8 @@ func testRemoveExpiredObjects(tc *testContext) {
 
 	for _, messages := range testObj {
 		for _, message := range messages {
-			_, _ = tc.db.InsertObject(msgToBytes(message))
+			msg, _ := wire.ToMsgObject(message)
+			_, _ = tc.db.InsertObject(msg)
 		}
 	}
 
@@ -592,7 +584,8 @@ func testRemoveExpiredObjects(tc *testContext) {
 
 	for i, messages := range testObj {
 		for j, message := range messages {
-			hash, _ := wire.NewShaHash(bmutil.CalcInventoryHash(msgToBytes(message)))
+			msg, _ := wire.ToMsgObject(message)
+			hash := msg.InventoryHash()
 
 			exists, _ := tc.db.ExistsObject(hash)
 

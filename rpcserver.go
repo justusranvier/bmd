@@ -8,12 +8,10 @@
 package main
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/base64"
 	"errors"
-	"fmt"
 	"io/ioutil"
 	prand "math/rand"
 	"net"
@@ -266,18 +264,13 @@ func (s *rpcServer) restrictAdmin(client *rpc2.Client) error {
 
 // NotifyObject is used to notify the RPC server of any new objects so that it
 // can send those onwards to the client.
-func (s *rpcServer) NotifyObject(msg []byte, counter uint64) {
-	// Find type of object.
-	_, _, objType, _, _, err := wire.DecodeMsgObjectHeader(bytes.NewReader(msg))
-	if err != nil {
-		panic(fmt.Sprintf("invalid object: %v", err))
-	}
+func (s *rpcServer) NotifyObject(msg *wire.MsgObject, counter uint64) {
 	out := &RPCReceiveArgs{
-		Object:  base64.StdEncoding.EncodeToString(msg),
+		Object:  base64.StdEncoding.EncodeToString(wire.EncodeMessage(msg)),
 		Counter: counter,
 	}
 
-	switch objType {
+	switch msg.ObjectType {
 	case wire.ObjectTypeBroadcast:
 		s.evtMgr.Emit(rpcEvtNewBroadcast, out)
 	case wire.ObjectTypeGetPubKey:

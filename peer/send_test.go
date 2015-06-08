@@ -8,13 +8,13 @@ import (
 	"bytes"
 	"errors"
 	"net"
-	"sync"
 	"testing"
 	"time"
 
+	"github.com/monetas/bmd/database"
+	_ "github.com/monetas/bmd/database/memdb"
 	"github.com/monetas/bmd/peer"
 	"github.com/monetas/bmutil"
-	"github.com/monetas/bmutil/identity"
 	"github.com/monetas/bmutil/wire"
 )
 
@@ -168,110 +168,11 @@ func NewMockConnection(addr net.Addr, connected bool, fails bool) *MockConnectio
 	}
 }
 
-// MockDb is a very simple database that does not implement most of the functionality
-// which is normally required.
-type MockDb struct {
-	get map[wire.ShaHash][]byte
-	mtx sync.Mutex
-}
-
-func (db *MockDb) Close() error {
-	return nil
-}
-
-func (db *MockDb) ExistsObject(hash *wire.ShaHash) (bool, error) {
-	_, ok := db.get[*hash]
-	return ok, nil
-}
-
-func (db *MockDb) FetchObjectByHash(hash *wire.ShaHash) ([]byte, error) {
-	db.mtx.Lock()
-	z, ok := db.get[*hash]
-	db.mtx.Unlock()
-	if !ok {
-		return nil, errors.New("hash not found")
-	}
-	return z, nil
-}
-
-func (db *MockDb) FetchObjectByCounter(wire.ObjectType, uint64) ([]byte, error) {
-	return nil, nil
-}
-
-func (db *MockDb) FetchObjectsFromCounter(objType wire.ObjectType, counter uint64,
-	count uint64) (map[uint64][]byte, uint64, error) {
-	return nil, 0, nil
-}
-
-func (db *MockDb) FetchIdentityByAddress(*bmutil.Address) (*identity.Public, error) {
-	return nil, nil
-}
-
-func (db *MockDb) FilterObjects(func(hash *wire.ShaHash,
-	obj []byte) bool) (map[wire.ShaHash][]byte, error) {
-	return nil, nil
-}
-
-func (db *MockDb) FetchRandomInvHashes(count uint64,
-	filter func(*wire.ShaHash, []byte) bool) ([]wire.ShaHash, error) {
-	return nil, nil
-}
-
-func (db *MockDb) GetCounter(wire.ObjectType) (uint64, error) {
-	return 0, nil
-}
-
-func (db *MockDb) InsertObject(b []byte) (uint64, error) {
-	hash, _ := wire.NewShaHash(bmutil.CalcInventoryHash(b))
-	db.get[*hash] = b
-	return 0, nil
-}
-
-func (db *MockDb) RemoveObject(*wire.ShaHash) error {
-	return nil
-}
-
-func (db *MockDb) RemoveObjectByCounter(wire.ObjectType, uint64) error {
-	return nil
-}
-
-func (db *MockDb) RemoveExpiredObjects() error {
-	return nil
-}
-
-func (db *MockDb) RemovePubKey(*wire.ShaHash) error {
-	return nil
-}
-
-func (db *MockDb) RollbackClose() (err error) {
-	err = nil
-	return
-}
-
-func (db *MockDb) Sync() (err error) {
-	err = nil
-	return
-}
-
-func (db *MockDb) Lock() {
-	db.mtx.Lock()
-}
-
-func (db *MockDb) Unlock() {
-	db.mtx.Unlock()
-}
-
-func NewMockDb() *MockDb {
-	return &MockDb{
-		get: make(map[wire.ShaHash][]byte),
-	}
-}
-
 var mockAddr net.Addr = &net.TCPAddr{IP: net.ParseIP("192.168.0.1"), Port: 8333}
 
 func TestSendStartStop(t *testing.T) {
 	conn := NewMockConnection(mockAddr, true, false)
-	db := NewMockDb()
+	db, _ := database.CreateDB("memdb")
 
 	queue := peer.NewSend(peer.NewInventory(), db)
 
@@ -326,7 +227,7 @@ func TestSendStartStop(t *testing.T) {
 
 func TestSendMessage(t *testing.T) {
 	conn := NewMockConnection(mockAddr, true, false)
-	db := NewMockDb()
+	db, _ := database.CreateDB("memdb")
 	var err error
 
 	queue := peer.NewSend(peer.NewInventory(), db)
@@ -404,16 +305,16 @@ func TestSendMessage(t *testing.T) {
 
 func TestRequestData(t *testing.T) {
 	conn := NewMockConnection(mockAddr, true, false)
-	db := NewMockDb()
+	db, _ := database.CreateDB("memdb")
+
 	var err error
 
 	queue := peer.NewSend(peer.NewInventory(), db)
-
 	message := wire.NewMsgUnknownObject(345, time.Now(), wire.ObjectType(4), 1, 1, []byte{77, 82, 53, 48, 96, 1})
 
-	data := wire.EncodeMessage(message)
-	db.InsertObject(data)
-	hashes := []*wire.InvVect{&wire.InvVect{Hash: *wire.MessageHash(message)}}
+	objMsg, _ := wire.ToMsgObject(message)
+	db.InsertObject(objMsg)
+	hashes := []*wire.InvVect{&wire.InvVect{Hash: *objMsg.InventoryHash()}}
 
 	// The queue isn't running yet, so this should return an error.
 	err = queue.QueueDataRequest(hashes)
@@ -428,9 +329,9 @@ func TestRequestData(t *testing.T) {
 		t.Errorf("Error returned: %s", err)
 	}
 
-	sentData := wire.EncodeMessage(conn.MockRead(nil))
+	sentData := conn.MockRead(nil)
 
-	if !bytes.Equal(data, sentData) {
+	if !bytes.Equal(wire.EncodeMessage(message), wire.EncodeMessage(sentData)) {
 		t.Errorf("Different message received somehow. ")
 	}
 
@@ -439,37 +340,35 @@ func TestRequestData(t *testing.T) {
 	// for code coverage. In order to ensure that the queue behaves correctly,
 	// we send a regular message after and receive it.
 	badData := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 0}
-	badHash, _ := wire.NewShaHash(bmutil.CalcInventoryHash(badData))
+	badHash, _ := wire.NewShaHash(bmutil.Sha512(badData)[:32])
 	badHashes := []*wire.InvVect{&wire.InvVect{Hash: *badHash}}
 	queue.QueueDataRequest(badHashes)
 
 	queue.QueueDataRequest(hashes)
 	// Force the send to manage all queued requests.
-	sentData = wire.EncodeMessage(conn.MockRead(nil))
-	if !bytes.Equal(data, sentData) {
+	sentData = conn.MockRead(nil)
+	if !bytes.Equal(wire.EncodeMessage(message), wire.EncodeMessage(sentData)) {
 		t.Errorf("Wrong message returned.")
 	}
 
-	db.InsertObject(badData)
 	queue.QueueDataRequest(badHashes)
 
 	queue.QueueDataRequest(hashes)
-	sentData = wire.EncodeMessage(conn.MockRead(nil))
-	if !bytes.Equal(data, sentData) {
+	sentData = conn.MockRead(nil)
+	if !bytes.Equal(wire.EncodeMessage(message), wire.EncodeMessage(sentData)) {
 		t.Errorf("Wrong message returned.")
 	}
 
 	// Engineer a situation in which the data request channel gets filled up
 	// and must be cleaned out.
-	db.Lock()
 
 	i := 0
 	for {
 		objMsg := wire.NewMsgUnknownObject(666, time.Now(), wire.ObjectType(4), 1, 1, []byte{0, 0, 0, byte(i)})
 
-		data := wire.EncodeMessage(objMsg)
-		db.InsertObject(data)
-		hashes := []*wire.InvVect{&wire.InvVect{Hash: *wire.MessageHash(objMsg)}}
+		msg, _ := wire.ToMsgObject(objMsg)
+		db.InsertObject(msg)
+		hashes := []*wire.InvVect{&wire.InvVect{Hash: *msg.InventoryHash()}}
 
 		err = queue.QueueDataRequest(hashes)
 		if i == 50 {
@@ -485,7 +384,6 @@ func TestRequestData(t *testing.T) {
 	}
 
 	time.Sleep(time.Millisecond * 50)
-	db.Unlock()
 
 	reset := make(chan struct{})
 	go func() {
@@ -507,9 +405,9 @@ func TestRequestData(t *testing.T) {
 	for {
 		objMsg := wire.NewMsgUnknownObject(555, time.Now(), wire.ObjectType(4), 1, 1, []byte{0, 0, 0, byte(i)})
 
-		data := wire.EncodeMessage(objMsg)
-		db.InsertObject(data)
-		hashes := []*wire.InvVect{&wire.InvVect{Hash: *wire.MessageHash(objMsg)}}
+		msg, _ := wire.ToMsgObject(objMsg)
+		db.InsertObject(msg)
+		hashes := []*wire.InvVect{&wire.InvVect{Hash: *msg.InventoryHash()}}
 
 		err = queue.QueueDataRequest(hashes)
 		// Don't need to fill up the channel this time because there is
@@ -544,7 +442,7 @@ func TestQueueInv(t *testing.T) {
 	timer.C = timerChan // Make the ticker into something I control.
 
 	conn := NewMockConnection(mockAddr, true, false)
-	db := NewMockDb()
+	db, _ := database.CreateDB("memdb")
 
 	var err error
 	queue := peer.NewSend(peer.NewInventory(), db)

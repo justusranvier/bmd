@@ -39,7 +39,7 @@ func TestClosed(t *testing.T) {
 		t.Errorf("RollbackClose: unexpected error %v", err)
 	}
 
-	if _, err := db.InsertObject([]byte{0, 0}); err != database.ErrDbClosed {
+	if _, err := db.InsertObject(nil); err != database.ErrDbClosed {
 		t.Errorf("InsertObject: unexpected error %v", err)
 	}
 

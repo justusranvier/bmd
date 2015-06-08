@@ -19,7 +19,7 @@ type Logic interface {
 	HandleAddrMsg(*wire.MsgAddr) error
 	HandleInvMsg(*wire.MsgInv) error
 	HandleGetDataMsg(*wire.MsgGetData) error
-	HandleObjectMsg(wire.Message) error
+	HandleObjectMsg(*wire.MsgObject) error
 
 	PushVersionMsg()
 	PushVerAckMsg()

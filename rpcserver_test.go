@@ -16,7 +16,6 @@ import (
 	"github.com/cenkalti/rpc2/jsonrpc"
 	"github.com/gorilla/websocket"
 	"github.com/monetas/bmd/peer"
-	"github.com/monetas/bmutil"
 	"github.com/monetas/bmutil/wire"
 )
 
@@ -148,7 +147,7 @@ func testRPCSendObject(client *rpc2.Client, t *testing.T) {
 	if err != nil {
 		t.Errorf("for valid SendObject got error %v", err)
 	}
-	hash, _ := wire.NewShaHash(bmutil.CalcInventoryHash(data))
+	hash := testObj[0].InventoryHash()
 
 	// Check if advertised.
 	if ok, err := serv.objectManager.haveInventory(wire.NewInvVect(hash)); !ok {
@@ -263,7 +262,7 @@ func TestRPCConnection(t *testing.T) {
 
 	// Create a server.
 	listeners := []string{net.JoinHostPort("", "8445")}
-	serv, err = newServer(listeners, getMemDb([]wire.Message{}),
+	serv, err = newServer(listeners, getMemDb([]*wire.MsgObject{}),
 		MockListen([]*MockListener{
 			NewMockListener(remoteAddr, make(chan peer.Connection), make(chan struct{}, 1))}))
 

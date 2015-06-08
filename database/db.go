@@ -39,14 +39,14 @@ type Db interface {
 
 	// FetchObjectByHash returns an object from the database as a byte array.
 	// It is upto the implementation to decode the byte array.
-	FetchObjectByHash(*wire.ShaHash) ([]byte, error)
+	FetchObjectByHash(*wire.ShaHash) (*wire.MsgObject, error)
 
 	// FetchObjectByCounter returns the corresponding object based on the
 	// counter. Note that each object type has a different counter, with unknown
 	// objects being consolidated into one counter. Counters are meant for use
 	// as a convenience method for fetching new data from database since last
 	// check.
-	FetchObjectByCounter(wire.ObjectType, uint64) ([]byte, error)
+	FetchObjectByCounter(wire.ObjectType, uint64) (*wire.MsgObject, error)
 
 	// FetchObjectsFromCounter returns a map of `count' objects which have a
 	// counter position starting from `counter'. Key is the value of counter and
@@ -54,7 +54,7 @@ type Db interface {
 	// value of the last object, which could be useful for more queries to the
 	// function.
 	FetchObjectsFromCounter(objType wire.ObjectType, counter uint64,
-		count uint64) (map[uint64][]byte, uint64, error)
+		count uint64) (map[uint64]*wire.MsgObject, uint64, error)
 
 	// FetchIdentityByAddress returns identity.Public stored in the form
 	// of a PubKey message in the pubkey database.
@@ -68,11 +68,11 @@ type Db interface {
 	//
 	// WARNING: filter must not mutate the object and/or its inventory hash.
 	FilterObjects(func(hash *wire.ShaHash,
-		obj []byte) bool) (map[wire.ShaHash][]byte, error)
+		obj *wire.MsgObject) bool) (map[wire.ShaHash]*wire.MsgObject, error)
 
 	// FetchRandomInvHashes returns the specified number of inventory hashes
 	// corresponding to random unexpired objects from the database and filtering
-	// them by calling filter(invHash, objectData) on each object. A return
+	// them by calling filter(invHash, objectMsg) on each object. A return
 	// value of true from filter means that the object would be returned.
 	//
 	// Useful for creating inv message, with filter being used to filter out
@@ -80,17 +80,17 @@ type Db interface {
 	//
 	// WARNING: filter must not mutate the object and/or its inventory hash.
 	FetchRandomInvHashes(count uint64,
-		filter func(*wire.ShaHash, []byte) bool) ([]wire.ShaHash, error)
+		filter func(*wire.ShaHash, *wire.MsgObject) bool) ([]wire.ShaHash, error)
 
 	// GetCounter returns the highest value of counter that exists for objects
 	// of the given type.
 	GetCounter(wire.ObjectType) (uint64, error)
 
-	// InsertObject inserts data of the given type and hash into the database.
-	// It returns the counter position. If the object is a PubKey, it inserts it
-	// into a separate place where it isn't touched by RemoveObject or
+	// InsertObject inserts the given object into the database and returns the
+	// counter position. If the object is a PubKey, it inserts it into a
+	// separate place where it isn't touched by RemoveObject or
 	// RemoveExpiredObjects and has to be removed using RemovePubKey.
-	InsertObject([]byte) (uint64, error)
+	InsertObject(*wire.MsgObject) (uint64, error)
 
 	// RemoveObject removes the object with the specified hash from the
 	// database. Does not remove PubKeys.
