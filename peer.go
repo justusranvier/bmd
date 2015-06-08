@@ -97,9 +97,10 @@ func (p *bmpeer) disconnect() {
 // Start starts running the peer.
 func (p *bmpeer) Start() {
 	peerLog.Info(p.peer.PrependAddr("Started."))
-	if p.peer.Start() != nil {
+	err := p.peer.Start()
+	if err != nil {
 		p.server.donePeers <- p
-		peerLog.Error(p.peer.PrependAddr("Failed to connect."))
+		peerLog.Error(p.peer.PrependAddr(fmt.Sprint("Failed to connect: ", err)))
 	}
 	if !p.inbound {
 		p.PushVersionMsg()

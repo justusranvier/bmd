@@ -14,6 +14,8 @@ import (
 	"os"
 	"runtime"
 	"runtime/pprof"
+
+	"github.com/monetas/bmd/peer"
 )
 
 var (
@@ -25,13 +27,16 @@ var (
 // the fact that deferred functions do not run when os.Exit() is called. The
 func bmdMain() error {
 
-	// load configuration
+	// Load configuration.
 	tcfg, _, err := loadConfig(false)
 	if err != nil {
 		return err
 	}
 	cfg = tcfg
 	defer backendLog.Flush()
+
+	// Ensure that the correct dialer is used.
+	peer.SetDialer(bmdDial)
 
 	// Show version at startup.
 	bmdLog.Infof("Version %s", version())

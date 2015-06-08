@@ -37,7 +37,7 @@ func TstNewListener(netListen net.Listener) Listener {
 // at the end of the test.
 func TstSwapDial(f func(string, string) (net.Conn, error)) func(string, string) (net.Conn, error) {
 	g := dial
-	dial = f
+	SetDialer(f)
 	return g
 }
 

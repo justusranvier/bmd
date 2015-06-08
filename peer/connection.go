@@ -179,6 +179,11 @@ func (pc *connection) Connect() error {
 	return nil
 }
 
+// SetDialer sets the dialer used by peer to connect to peers.
+func SetDialer(dialer func(string, string) (net.Conn, error)) {
+	dial = dialer
+}
+
 // NewConnection creates a new *connection.
 func NewConnection(addr net.Addr, maxDown, maxUp int64) Connection {
 	pc := &connection{
