@@ -8,8 +8,11 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"math/rand"
 	"net"
+	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -30,6 +33,24 @@ func randomShaHash() *wire.ShaHash {
 	}
 	hash, _ := wire.NewShaHash(b)
 	return hash
+}
+
+// resetCfg is called to refresh configuration before every test. The returned
+// function is supposed to be called at the end of the test; to clear temp
+// directories.
+func resetCfg(cfg *config) func() {
+	dir, err := ioutil.TempDir("", "bmd")
+	if err != nil {
+		panic(fmt.Sprint("Failed to create temporary directory:", err))
+	}
+	cfg.DataDir = dir
+	cfg.LogDir = filepath.Join(cfg.DataDir, defaultLogDirname)
+	cfg.RPCKey = filepath.Join(cfg.DataDir, "rpc.key")
+	cfg.RPCCert = filepath.Join(cfg.DataDir, "rpc.cert")
+
+	return func() {
+		os.RemoveAll(dir)
+	}
 }
 
 // tstNewPeerHandshakeComplete creates a new peer object that has already nearly
@@ -924,9 +945,12 @@ func TestOutboundPeerHandshake(t *testing.T) {
 		t.Fatalf("Config failed to load.")
 	}
 	cfg.MaxPeers = 1
+	cfg.ConnectPeers = []string{"5.45.99.75:8444"}
+	cfg.DisableDNSSeed = true
 	defer backendLog.Flush()
 
 	for testCase, response := range responses {
+		defer resetCfg(cfg)()
 		NewConn = handshakePeerBuilder(response)
 
 		// Create server and start it.
@@ -937,7 +961,7 @@ func TestOutboundPeerHandshake(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Server failed to start: %s", err)
 		}
-		serv.start([]*DefaultPeer{&DefaultPeer{"5.45.99.75:8444", 1, true}})
+		serv.Start()
 
 		go func() {
 			msg := <-report
@@ -1031,10 +1055,11 @@ func TestInboundPeerHandshake(t *testing.T) {
 		t.Fatalf("Config failed to load.")
 	}
 	cfg.MaxPeers = 1
+	cfg.DisableDNSSeed = true
 	defer backendLog.Flush()
 
 	for testCase, open := range openingMsg {
-
+		defer resetCfg(cfg)()
 		// Create server and start it.
 		listeners := []string{net.JoinHostPort("", "8445")}
 		var err error
@@ -1044,7 +1069,7 @@ func TestInboundPeerHandshake(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Server failed to start: %s", err)
 		}
-		serv.start([]*DefaultPeer{})
+		serv.Start()
 
 		// Test handshake.
 		incoming <- NewMockConnection(localAddr, remoteAddr, report,
@@ -1135,9 +1160,11 @@ func TestProcessAddr(t *testing.T) {
 		t.Fatalf("Config failed to load.")
 	}
 	cfg.MaxPeers = 1
+	cfg.DisableDNSSeed = true
 	defer backendLog.Flush()
 
 	for testCase, addrTest := range AddrTests {
+		defer resetCfg(cfg)()
 
 		// Add some addresses to the address manager.
 		addrs := make([]*wire.NetAddress, addrTest.NumAddrs)
@@ -1150,12 +1177,13 @@ func TestProcessAddr(t *testing.T) {
 		if err != nil {
 			t.Fatal("Server failed to start.")
 		}
-		serv.start([]*DefaultPeer{})
+		serv.Start()
 
 		for i := 0; i < addrTest.NumAddrs; i++ {
 			s := fmt.Sprintf("%d.173.147.%d:8333", i/64+60, i%64+60)
 			addrs[i], _ = serv.addrManager.DeserializeNetAddress(s)
 		}
+
 		serv.addrManager.AddAddresses(addrs, srcAddr)
 
 		mockConn := NewMockConnection(localAddr, remoteAddr, report,
@@ -1329,9 +1357,12 @@ func TestProcessInvAndObjectExchange(t *testing.T) {
 		t.Fatalf("Config failed to load.")
 	}
 	cfg.MaxPeers = 1
+	cfg.DisableDNSSeed = true
 	defer backendLog.Flush()
 
 	for testCase, test := range tests {
+		defer resetCfg(cfg)()
+
 		// Define the objects that will go in the database.
 		// Create server and start it.
 		listeners := []string{net.JoinHostPort("", "8445")}
@@ -1343,7 +1374,7 @@ func TestProcessInvAndObjectExchange(t *testing.T) {
 			t.Fatal("Server failed to start.")
 		}
 
-		serv.start([]*DefaultPeer{})
+		serv.Start()
 
 		mockConn := NewMockConnection(localAddr, remoteAddr, report,
 			NewDataExchangePeerTester(test.mockDB, test.peerDB, test.invAction))
