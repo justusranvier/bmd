@@ -246,13 +246,20 @@ func (s *server) handleBanPeerMsg(p *bmpeer) {
 
 // handleRelayInvMsg deals with relaying inventory to peers that are not already
 // known to have it. It is invoked from the peerHandler goroutine.
-func (s *server) handleRelayInvMsg(inv *wire.InvVect) {
+func (s *server) handleRelayInvMsg(inv []*wire.InvVect) {
 	s.state.forAllPeers(func(p *bmpeer) {
+		if p.peer.Connected() && p.invReceived {
+			ivl := p.inventory.FilterKnown(inv)
 
-		// Queue the inventory to be relayed with the next batch.
-		// It will be ignored if the peer is already known to
-		// have the inventory.
-		p.send.QueueInventory([]*wire.InvVect{inv})
+			if len(ivl) == 0 {
+				return
+			}
+
+			// Queue the inventory to be relayed with the next batch.
+			// It will be ignored if the peer is already known to
+			// have the inventory.
+			p.send.QueueInventory(ivl)
+		}
 	})
 }
 
@@ -620,6 +627,9 @@ func (s *server) Stop() error {
 		return nil
 	}
 
+	// Signal the remaining goroutines to quit.
+	close(s.quit)
+
 	// Stop all the listeners. There will not be any listeners if
 	// listening is disabled.
 	for _, listener := range s.listeners {
@@ -638,8 +648,6 @@ func (s *server) Stop() error {
 		}
 	}
 
-	// Signal the remaining goroutines to quit.
-	close(s.quit)
 	return nil
 }
 

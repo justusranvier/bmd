@@ -195,6 +195,7 @@ func NewConnection(addr net.Addr, maxDown, maxUp int64) Connection {
 
 	pc.idleTimer = time.AfterFunc(pc.idleTimeout, func() {
 		pc.WriteMessage(&wire.MsgPong{})
+		pc.idleTimer.Reset(pc.idleTimeout)
 	})
 
 	pc.idleTimer.Stop()

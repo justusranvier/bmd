@@ -87,12 +87,8 @@ func (send *send) QueueMessage(msg wire.Message) error {
 		return errors.New("Not running.")
 	}
 
-	select {
-	case send.msgQueue <- msg:
-		return nil
-	default:
-		return errors.New("Message queue full.")
-	}
+	send.msgQueue <- msg
+	return nil
 }
 
 // QueueDataRequest queues a list of invs whose corresponding objects
@@ -103,12 +99,8 @@ func (send *send) QueueDataRequest(inv []*wire.InvVect) error {
 		return errors.New("Not running.")
 	}
 
-	select {
-	case send.requestQueue <- inv:
-		return nil
-	default:
-		return errors.New("Data request queue full.")
-	}
+	send.requestQueue <- inv
+	return nil
 }
 
 // QueueInventory queues new inventory to be trickled periodically
@@ -118,12 +110,8 @@ func (send *send) QueueInventory(inv []*wire.InvVect) error {
 		return errors.New("Not running.")
 	}
 
-	select {
-	case send.outputInvChan <- inv:
-		return nil
-	default:
-		return errors.New("Inventory queue full.")
-	}
+	send.outputInvChan <- inv
+	return nil
 }
 
 // Start starts the send with a new connection.
@@ -263,8 +251,8 @@ out:
 				send.msgQueue <- invMsg
 			}
 
-			// Randomize the number of seconds from 4 to 16 minutes.
-			trickle.Reset(time.Duration(240000 + randTime.Int63n(720000)))
+			// Randomize the number of seconds from 20 to 60 seconds.
+			trickle.Reset(time.Second * (20 + time.Duration(randTime.Int63n(40))))
 		}
 	}
 

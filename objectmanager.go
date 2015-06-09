@@ -8,6 +8,7 @@
 package main
 
 import (
+	"container/list"
 	"fmt"
 	"path/filepath"
 	"sync"
@@ -24,16 +25,14 @@ const (
 	// objectManagerQueueSize specifies the size of object manager msgChan.
 	objectManagerQueueSize = 50
 
-	// objectRequestTimeout specifies the duration after which a request for an
-	// object should time out and the peer be disconnected from. This is
-	// supposed to be a rough estimate, not an exact value. Requests are
-	// cleaned after every objectRequestTimeout/2 time.
-	objectRequestTimeout = time.Minute * 2
-
 	// objectDbNamePrefix is the prefix for the object database name. The
 	// database type is appended to this value to form the full object database
 	// name.
 	objectDbNamePrefix = "objects"
+
+	// MaxPeerRequests is the maximum number of outstanding object requests a
+	// may have at any given time.
+	MaxPeerRequests = 120
 )
 
 // newPeerMsg signifies a newly connected peer to the object manager.
@@ -67,43 +66,76 @@ type peerRequest struct {
 	timestamp time.Time
 }
 
+// readyPeerMsg signals that a peer is ready to download more objects.
+type readyPeerMsg bmpeer
+
 // ObjectManager provides a concurrency safe object manager for handling all
 // incoming and outgoing.
 type ObjectManager struct {
-	server           *server
-	started          int32
-	shutdown         int32
-	requestedObjects map[wire.InvVect]*peerRequest
-	msgChan          chan interface{}
-	wg               sync.WaitGroup
-	quit             chan struct{}
+	server   *server
+	started  int32
+	shutdown int32
+
+	// The set of peers that are fully connected.
+	peers map[*bmpeer]struct{}
+
+	// The set of peers that are working on downloading messages.
+	working map[*bmpeer]struct{}
+
+	// The set of objects which we do not have and which have not been
+	// assigned to peers for download.
+	unknown map[wire.InvVect]struct{}
+
+	// The set of objects which have been assigned to peers for download.
+	requested map[wire.InvVect]*peerRequest
+
+	relayInvChan chan *wire.InvVect
+	msgChan      chan interface{}
+	wg           sync.WaitGroup
+	quit         chan struct{}
 }
 
-// handleNewPeerMsg deals with new peers that have signalled they may
+// handleNewPeer deals with new peers that have signalled they may
 // be considered as a sync peer (they have already successfully negotiated). It
 // is invoked from the syncHandler goroutine.
-func (om *ObjectManager) handleNewPeerMsg(peers map[*bmpeer]struct{}, p *bmpeer) {
+func (om *ObjectManager) handleNewPeer(p *bmpeer) {
 	// Ignore if in the process of shutting down.
 	if atomic.LoadInt32(&om.shutdown) != 0 {
 		return
 	}
 
 	// Add the peer
-	peers[p] = struct{}{}
+	om.peers[p] = struct{}{}
+	objmgrLog.Debug("Peer ", p.addr.String(), " added to object manager.")
 }
 
-// handleDonePeerMsg deals with peers that have signalled they are done. It is
+// handleDonePeer deals with peers that have signalled they are done. It is
 // invoked from the syncHandler goroutine.
-func (om *ObjectManager) handleDonePeerMsg(peers map[*bmpeer]struct{}, p *bmpeer) {
-	// Remove the peer from the list of candidate peers.
-	delete(peers, p)
+func (om *ObjectManager) handleDonePeer(p *bmpeer) {
+	if _, ok := om.peers[p]; !ok {
+		return
+	}
 
+	// Remove the peer from the list of candidate peers.
+	delete(om.peers, p)
+	delete(om.working, p)
+
+	reassignInvs := 0
 	// Remove requested objects from the global map so that they will be fetched
 	// from elsewhere next time we get an inv.
-	for invHash, objPeer := range om.requestedObjects {
+	for invHash, objPeer := range om.requested {
 		if objPeer.peer == p { // peer matches
-			delete(om.requestedObjects, invHash)
+			delete(om.requested, invHash)
+
+			om.unknown[invHash] = struct{}{}
+
+			reassignInvs++
 		}
+	}
+
+	objmgrLog.Debug("Peer ", p.addr.String(), " removed from object manager; ", reassignInvs, " reassigned invs.")
+	if reassignInvs > 0 {
+		om.assignRequests()
 	}
 }
 
@@ -112,20 +144,26 @@ func (om *ObjectManager) handleObjectMsg(omsg *objectMsg) {
 	invVect := wire.NewInvVect(omsg.object.InventoryHash())
 
 	// Unrequested data means disconnect.
-	if p, exists := om.requestedObjects[*invVect]; !exists || p.peer != omsg.peer {
+	if p, exists := om.requested[*invVect]; !exists || p.peer != omsg.peer {
 		// An attacker could guess which objects are being requested from peers
 		// and send them before the actual peer the object was requested from,
 		// thus disconnecting legitimate peers. We want to prevent against such
 		// an attack by checking that objects came from peers that we requested
 		// from.
-		peerLog.Errorf(omsg.peer.peer.PrependAddr(
-			fmt.Sprint("Disconnecting because unrequested object ",
-				invVect.Hash.String()[:8], " received.")))
+		objmgrLog.Error(omsg.peer.addr.String(),
+			" Disconnecting because of unrequested object ", invVect.Hash.String()[:8], " received.")
 		omsg.peer.disconnect()
 		return
 	}
 
-	delete(om.requestedObjects, *invVect)
+	// TODO Before, when this number was not logged, numbers could be recorded
+	// that were off by a long enough time to cause expired object requests.
+	// There must be some way to get it working right, but it seems to work
+	// as long as I log the time!
+	now := time.Now()
+	omsg.peer.lastReceipt = time.Now()
+
+	delete(om.requested, *invVect)
 
 	// Check PoW.
 	if !pow.Check(omsg.object, pow.DefaultExtraBytes,
@@ -133,12 +171,15 @@ func (om *ObjectManager) handleObjectMsg(omsg *objectMsg) {
 		return // invalid PoW
 	}
 
-	om.handleInsert(omsg.object)
+	objmgrLog.Debugf(omsg.peer.peer.PrependAddr(fmt.Sprint("Object ", invVect.Hash.String()[:8],
+		" received; ", omsg.peer.inventory.NumRequests(), " still assigned; ", len(om.requested), " still queued; ",
+		len(om.unknown), " unqueued; last receipt = ", now)))
 
-	peerLog.Debugf(omsg.peer.peer.PrependAddr(fmt.Sprint("Object ", invVect.Hash.String()[:8], " received.")))
+	om.handleInsert(omsg.object)
 }
 
 func (om *ObjectManager) handleInsert(obj *wire.MsgObject) uint64 {
+	invVect := wire.NewInvVect(obj.InventoryHash())
 	// Insert object into database.
 	counter, err := om.server.db.InsertObject(obj)
 	if err != nil {
@@ -152,7 +193,7 @@ func (om *ObjectManager) handleInsert(obj *wire.MsgObject) uint64 {
 	}
 
 	// Advertise objects to other peers.
-	om.server.handleRelayInvMsg(wire.NewInvVect(obj.InventoryHash()))
+	om.relayInvChan <- invVect
 
 	return counter
 }
@@ -167,72 +208,259 @@ func (om *ObjectManager) haveInventory(invVect *wire.InvVect) (bool, error) {
 // handleInvMsg handles inv messages from all peers.
 // We examine the inventory advertised by the remote peer and act accordingly.
 func (om *ObjectManager) handleInvMsg(imsg *invMsg) {
-	requestQueue := make([]*wire.InvVect, len(imsg.inv.InvList))
+	requestList := make([]*wire.InvVect, len(imsg.inv.InvList))
 
 	// Request the advertised inventory if we don't already have it.
-	var i int
-
+	numInvs := 0
 	for _, iv := range imsg.inv.InvList {
 		// Add inv to known inventory.
 		imsg.peer.inventory.AddKnown(iv)
 
-		// Request the inventory if we don't already have it.
 		haveInv, err := om.haveInventory(iv)
-		if err != nil {
+		if err != nil || haveInv {
 			continue
 		}
 
-		if !haveInv {
-			// Add it to the request queue.
-			requestQueue[i] = iv
-			i++
-			om.requestedObjects[*iv] = &peerRequest{
+		// If the object is already known about, ignore it.
+		if _, ok := om.unknown[*iv]; ok {
+			continue
+		}
+
+		// If this has already been requested, ignore it.
+		if _, ok := om.requested[*iv]; ok {
+			continue
+		}
+
+		// Add it to the list of invs to be requested.
+		requestList[numInvs] = iv
+		numInvs++
+	}
+
+	// Nothing to request, so we are done.
+	if numInvs == 0 {
+		return
+	}
+	objmgrLog.Trace("Inv received with ", len(requestList), " unknown objects.")
+
+	// If the request can fit, we just request it from the peer that told us
+	// about it in the first place.
+	if numInvs <= MaxPeerRequests-imsg.peer.inventory.NumRequests() {
+
+		for _, iv := range requestList[:numInvs] {
+			om.requested[*iv] = &peerRequest{
 				peer:      imsg.peer,
 				timestamp: time.Now(),
 			}
 		}
-	}
+		objmgrLog.Trace("All are assigned to peer ", imsg.peer.addr.String(),
+			"; total assigned is ", len(om.requested))
 
-	if i == 0 {
+		imsg.peer.PushGetDataMsg(requestList[:numInvs])
+		om.working[imsg.peer] = struct{}{}
+
+		// Send the peer more to download if there is more that it could be doing.
+		// This can happen if a peer connects and sends an inv message with only
+		// one or two new invs while the initial download is going on, so it
+		// needs to be given a lot more to download.
+		if len(om.unknown) > 0 {
+			om.handleReadyPeer(imsg.peer)
+		}
 		return
 	}
 
-	peerLog.Debugf(imsg.peer.peer.PrependAddr(fmt.Sprint(i, " unknown hashes received.")))
-	// get inventory from specified peer
-	imsg.peer.PushGetDataMsg(requestQueue[:i])
+	// Add the new invs to the list of unknown invs.
+	for _, iv := range requestList[:numInvs] {
+		om.unknown[*iv] = struct{}{}
+	}
+
+	// If the number of unknown objects had been zero before, we have to do
+	// something to get the download process started again.
+	if len(om.unknown) == numInvs {
+		om.assignRequests()
+	}
 }
 
-// clearRequests is used to periodically clear out timed out requests. It's used
+// assignRequestsAll takes the list of unknown objects and tries to assign
+// some to each peer, up to the maximum allowed.
+func (om *ObjectManager) assignRequests() {
+	if len(om.peers) == 0 {
+		return
+	}
+	objmgrLog.Trace("Assigning objects to peers for download; number of requested objects: ", len(om.requested))
+	time.Sleep(5 * time.Second)
+
+	for peer := range om.peers {
+		if len(om.unknown) == 0 {
+			return
+		}
+
+		// Assign some unknown objects to each peer.
+		om.handleReadyPeer(peer)
+	}
+}
+
+func (om *ObjectManager) handleReadyPeer(peer *bmpeer) {
+	assigned := 0
+
+	// Detect if no peers are working by the end of this function and call
+	// cleanUnknown if so.
+	defer func() {
+		if assigned != 0 {
+			om.working[peer] = struct{}{}
+			return
+		}
+		delete(om.working, peer)
+		if len(om.working) == 0 {
+			om.cleanUnknown()
+		}
+	}()
+
+	// If there are no objects to get, we don't need to request anything.
+	if len(om.unknown) == 0 {
+		return
+	}
+	objmgrLog.Trace("Assigning objects to peer ", peer.addr.String())
+
+	// If the object is already downloading too much, return.
+	max := MaxPeerRequests - peer.inventory.NumRequests()
+	if max <= 0 {
+		return
+	}
+
+	requestList := make([]*wire.InvVect, max)
+
+	// Since unknown is a map, the elements come out randomly ordered. Therefore
+	// (for now at least) object request handling does not work like a queue.
+	// We might ask for new invs earlier than old invs, or with any order at all.
+	//objmgrLog.Trace("Looping through unknown objects. Max is ", max)
+	for iv := range om.unknown {
+		//objmgrLog.Trace("inv : ", iv.Hash.String())
+		if assigned >= max {
+			break
+		}
+
+		// Add an inv in the list of unknown objects to the request list
+		// if the peer knows about it.
+		if !peer.inventory.IsKnown(&iv) {
+			continue
+		}
+
+		if _, ok := om.requested[iv]; ok {
+			objmgrLog.Error("Object ", iv.Hash.String()[:8], " is in both requested objects AND unknown objects. Should not happen!")
+			delete(om.unknown, iv)
+			continue
+		}
+
+		// Add to the list of requested objects and remove from the list of unknown objects.
+		newiv := iv
+		requestList[assigned] = &newiv
+		delete(om.unknown, iv)
+
+		om.requested[iv] = &peerRequest{
+			peer:      peer,
+			timestamp: time.Now(),
+		}
+
+		assigned++
+	}
+
+	// If there was nothing the peer could give us, return.
+	if assigned == 0 {
+		return
+	}
+
+	objmgrLog.Trace(assigned, " objects assigned to peer ", peer.addr.String(), ". ", len(om.unknown),
+		" unassigned objects remaining and ", len(om.requested), " total assigned.")
+	peer.PushGetDataMsg(requestList[:assigned])
+}
+
+// cleanUnknown is called after all the downloading work is done and it clears
+// out any remaining invs that are not known by any peers.
+func (om *ObjectManager) cleanUnknown() {
+	if len(om.unknown) == 0 {
+		return
+	}
+
+loop:
+	for iv := range om.unknown {
+		for peer := range om.peers {
+			if peer.inventory.IsKnown(&iv) {
+				peer.PushGetDataMsg([]*wire.InvVect{&iv})
+				continue loop
+			}
+		}
+
+		delete(om.unknown, iv)
+	}
+}
+
+// clearRequests is used to clear out timed out requests periodically. It's used
 // to prevent against a scenario in which a malicious peer advertises an inv
 // hash but does not send the object. This would effectively 'censor' the object
 // from the peer. To avoid this scenario, we need to record the timestamp of a
 // request and set it to timeout within the set duration.
-func (om *ObjectManager) clearRequests() {
-	for _, p := range om.requestedObjects {
+func (om *ObjectManager) clearRequests(d time.Duration) {
+	now := time.Now()
+	// Collect all peers to be disconnected in one map or we lock up the
+	// objectHandler with too many requests at once.
+	peerDisconnect := make(map[*bmpeer]struct{})
+	for hash, p := range om.requested {
 		// if request has expired
-		if p.timestamp.Add(objectRequestTimeout).After(time.Now()) {
-			p.peer.disconnect() // we're done with this malicious peer
-			om.DonePeer(p.peer)
+		if p.timestamp.Add(d).Before(now) {
+			peerQueueSize := p.peer.inventory.NumRequests()
+			// If the peer has a long queue of requested objects, then don't
+			// disconnect it unless it has not received SOME object recently enough,
+			// or if the request is expired by a much longer time.
+			if peerQueueSize < 10 ||
+				p.timestamp.Add(d*time.Duration(peerQueueSize)).Before(now) ||
+				p.peer.lastReceipt.Add(d).Before(now) {
+
+				if _, ok := peerDisconnect[p.peer]; !ok {
+					objmgrLog.Debug(p.peer.peer.PrependAddr(fmt.Sprint(
+						" disconnecting due to expired request for object ", hash.Hash.String()[:8], "; queue size = ",
+						peerQueueSize, "; last receipt =", p.peer.lastReceipt, "; cond 1 =",
+						p.timestamp.Add(d*time.Duration(peerQueueSize)).Before(now),
+						"; cond 2 = ", p.peer.lastReceipt.Add(d).Before(now))))
+
+					peerDisconnect[p.peer] = struct{}{}
+				}
+			}
 		}
 	}
+
+	// Disconnect the peers gradually in a separate go routine so as not
+	// to deluge the object manager with requests.
+	go func() {
+		for peer := range peerDisconnect {
+			peer.disconnect() // we're done with this malicious peer
+			time.Sleep(time.Second)
+		}
+	}()
 }
 
 // objectHandler is the main handler for the object manager. It must be run as a
 // goroutine. It processes inv messages in a separate goroutine from the peer
 // handlers.
 func (om *ObjectManager) objectHandler() {
-	candidatePeers := make(map[*bmpeer]struct{})
-	clearTick := time.NewTicker(objectRequestTimeout / 2)
+	clearTick := time.NewTicker(cfg.RequestExpire / 2)
 
 	for {
 		select {
+		case <-om.quit:
+			clearTick.Stop()
+			om.wg.Done()
+			return
+
 		case <-clearTick.C:
-			om.clearRequests()
+			// Under normal operation, we expire requests much more quickly
+			// than during the initial download.
+			om.clearRequests(cfg.RequestExpire)
 
 		case m := <-om.msgChan:
 			switch msg := m.(type) {
+
 			case *newPeerMsg:
-				om.handleNewPeerMsg(candidatePeers, msg.peer)
+				om.handleNewPeer(msg.peer)
 
 			case *objectMsg:
 				om.handleObjectMsg(msg)
@@ -241,13 +469,45 @@ func (om *ObjectManager) objectHandler() {
 				om.handleInvMsg(msg)
 
 			case *donePeerMsg:
-				om.handleDonePeerMsg(candidatePeers, msg.peer)
-			}
+				om.handleDonePeer(msg.peer)
 
+			case *readyPeerMsg:
+				om.handleReadyPeer((*bmpeer)(msg))
+			}
+		}
+	}
+}
+
+// relayHandler collects new invs that are to be relayed to other peers and sends
+// them every ten seconds. Must be run in a go routine.
+func (om *ObjectManager) relayHandler() {
+	relayInvTick := time.NewTicker(10 * time.Second)
+	relayInvList := list.New()
+
+	for {
+		select {
 		case <-om.quit:
-			clearTick.Stop()
+			relayInvTick.Stop()
 			om.wg.Done()
 			return
+
+		case <-relayInvTick.C:
+			objmgrLog.Trace("Relay inv ticker ticked.")
+			if relayInvList.Len() == 0 {
+				continue
+			}
+			invs := make([]*wire.InvVect, relayInvList.Len())
+			i := 0
+			for e := relayInvList.Front(); e != nil; e = e.Next() {
+				invs[i] = e.Value.(*wire.InvVect)
+				i++
+			}
+			relayInvList = list.New()
+			objmgrLog.Trace("Relying list of invs of size ", len(invs))
+			om.server.handleRelayInvMsg(invs)
+
+		case inv := <-om.relayInvChan:
+			relayInvList.PushBack(inv)
 		}
 	}
 }
@@ -260,6 +520,16 @@ func (om *ObjectManager) NewPeer(p *bmpeer) {
 	}
 
 	om.msgChan <- &newPeerMsg{peer: p}
+}
+
+// ReadyPeer signals that a peer is ready to download more objects.
+func (om *ObjectManager) ReadyPeer(p *bmpeer) {
+	// Ignore if we are shutting down.
+	if atomic.LoadInt32(&om.shutdown) != 0 {
+		return
+	}
+
+	om.msgChan <- &p
 }
 
 // QueueObject adds the passed object message and peer to the object handling
@@ -300,8 +570,11 @@ func (om *ObjectManager) Start() {
 		return
 	}
 
-	om.wg.Add(1)
+	objmgrLog.Info("Object manager started.")
+
+	om.wg.Add(2)
 	go om.objectHandler()
+	go om.relayHandler()
 }
 
 // Stop gracefully shuts down the object manager by stopping all asynchronous
@@ -310,6 +583,8 @@ func (om *ObjectManager) Stop() error {
 	if atomic.AddInt32(&om.shutdown, 1) != 1 {
 		return nil
 	}
+
+	objmgrLog.Info("Object manager stopped.")
 
 	close(om.quit)
 	om.wg.Wait()
@@ -320,10 +595,14 @@ func (om *ObjectManager) Stop() error {
 // processing objects and inv messages asynchronously.
 func newObjectManager(s *server) *ObjectManager {
 	return &ObjectManager{
-		server:           s,
-		requestedObjects: make(map[wire.InvVect]*peerRequest),
-		msgChan:          make(chan interface{}, objectManagerQueueSize),
-		quit:             make(chan struct{}),
+		server:       s,
+		requested:    make(map[wire.InvVect]*peerRequest),
+		unknown:      make(map[wire.InvVect]struct{}),
+		msgChan:      make(chan interface{}, objectManagerQueueSize),
+		quit:         make(chan struct{}),
+		relayInvChan: make(chan *wire.InvVect, objectManagerQueueSize),
+		peers:        make(map[*bmpeer]struct{}),
+		working:      make(map[*bmpeer]struct{}),
 	}
 }
 
