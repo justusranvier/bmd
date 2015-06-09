@@ -27,7 +27,6 @@ import (
 
 const (
 	defaultConfigFilename = "bmd.conf"
-	defaultDataDirname    = "data"
 	defaultLogLevel       = "info"
 	defaultLogDirname     = "logs"
 	defaultLogFilename    = "bmd.log"
@@ -35,8 +34,8 @@ const (
 	defaultBanDuration    = time.Hour * 24
 	defaultMaxRPCClients  = 25
 	defaultDbType         = "memdb"
-	defaultPort           = "8444"
-	defaultRPCPort        = "8442"
+	defaultPort           = 8444
+	defaultRPCPort        = 8442
 	defaultMaxUpPerPeer   = 1024 * 1024 // 1MBps
 	defaultMaxDownPerPeer = 1024 * 1024
 	defaultMaxOutbound    = 10
@@ -44,13 +43,15 @@ const (
 )
 
 var (
-	bmdHomeDir         = btcutil.AppDataDir("bmd", false)
-	defaultConfigFile  = filepath.Join(bmdHomeDir, defaultConfigFilename)
-	defaultDataDir     = filepath.Join(bmdHomeDir, defaultDataDirname)
+	defaultDataDir     = btcutil.AppDataDir("bmd", false)
+	defaultConfigFile  = filepath.Join(defaultDataDir, defaultConfigFilename)
 	knownDbTypes       = database.SupportedDBs()
-	defaultRPCKeyFile  = filepath.Join(bmdHomeDir, "rpc.key")
-	defaultRPCCertFile = filepath.Join(bmdHomeDir, "rpc.cert")
-	defaultLogDir      = filepath.Join(bmdHomeDir, defaultLogDirname)
+	defaultRPCKeyFile  = filepath.Join(defaultDataDir, "rpc.key")
+	defaultRPCCertFile = filepath.Join(defaultDataDir, "rpc.cert")
+	defaultLogDir      = filepath.Join(defaultDataDir, defaultLogDirname)
+
+	defaultDNSSeeds = []string{"bootstrap8444.bitmessage.org:8444",
+		"bootstrap8080.bitmessage.org:8080"}
 )
 
 // Filesize is a custom configuration option for go-flags. It is used to parse
@@ -108,7 +109,7 @@ type config struct {
 	ShowVersion    bool          `short:"V" long:"version" description:"Display version information and exit"`
 	ConfigFile     string        `short:"C" long:"configfile" description:"Path to configuration file"`
 	DataDir        string        `short:"b" long:"datadir" description:"Directory to store data"`
-	LogDir         string        `long:"logdir" description:"Directory to log output."`
+	LogDir         string        `long:"logdir" description:"Directory to log output"`
 	AddPeers       []string      `short:"a" long:"addpeer" description:"Add a peer to connect with at startup"`
 	ConnectPeers   []string      `long:"connect" description:"Connect only to the specified peers at startup"`
 	DisableListen  bool          `long:"nolisten" description:"Disable listening for incoming connections -- NOTE: Listening is automatically disabled if the --connect or --proxy options are used without also specifying listen interfaces via --listen"`
@@ -148,6 +149,7 @@ type config struct {
 	lookup         func(string) ([]net.IP, error)
 	oniondial      func(string, string) (net.Conn, error)
 	dial           func(string, string) (net.Conn, error)
+	dnsSeeds       []string
 }
 
 // cleanAndExpandPath expands environment variables and leading ~ in the
@@ -155,7 +157,7 @@ type config struct {
 func cleanAndExpandPath(path string) string {
 	// Expand initial ~ to OS specific home directory.
 	if strings.HasPrefix(path, "~") {
-		homeDir := filepath.Dir(bmdHomeDir)
+		homeDir := filepath.Dir(defaultDataDir)
 		path = strings.Replace(path, "~", homeDir, 1)
 	}
 
@@ -275,17 +277,17 @@ func removeDuplicateAddresses(addrs []string) []string {
 
 // normalizeAddress returns addr with the passed default port appended if
 // there is not already a port specified.
-func normalizeAddress(addr, defaultPort string) string {
+func normalizeAddress(addr string, defaultPort int) string {
 	_, _, err := net.SplitHostPort(addr)
 	if err != nil {
-		return net.JoinHostPort(addr, defaultPort)
+		return net.JoinHostPort(addr, strconv.Itoa(defaultPort))
 	}
 	return addr
 }
 
 // normalizeAddresses returns a new slice with all the passed peer addresses
 // normalized with the given default port, and all duplicates removed.
-func normalizeAddresses(addrs []string, defaultPort string) []string {
+func normalizeAddresses(addrs []string, defaultPort int) []string {
 	for i, addr := range addrs {
 		addrs[i] = normalizeAddress(addr, defaultPort)
 	}
@@ -303,13 +305,36 @@ func fileExists(name string) bool {
 	return true
 }
 
+// createDir is used by loadConfig to create bmd home and data directories and
+// report errors back, if any.
+func createDir(path, name string) error {
+	err := os.MkdirAll(path, 0700)
+	if err != nil {
+		// Show a nicer error message if it's because a symlink is
+		// linked to a directory that does not exist (probably because
+		// it's not mounted).
+		if e, ok := err.(*os.PathError); ok && os.IsExist(err) {
+			if link, lerr := os.Readlink(e.Path); lerr == nil {
+				str := "is symlink %s -> %s mounted?"
+				err = fmt.Errorf(str, e.Path, link)
+			}
+		}
+
+		str := "loadConfig: Failed to create %s directory: %v"
+		err := fmt.Errorf(str, name, err)
+		fmt.Fprintln(os.Stderr, err)
+		return err
+	}
+	return nil
+}
+
 // newConfigParser returns a new command line flags parser.
 func newConfigParser(cfg *config, options flags.Options) *flags.Parser {
 	return flags.NewParser(cfg, options)
 }
 
 // loadConfig initializes and parses the config using a config file and command
-// line options. ignoreCL stands for ignore command line; meant to be used
+// line options. isTest is used to ignore command line; meant to be used
 // during testing.
 //
 // The configuration proceeds as follows:
@@ -321,7 +346,7 @@ func newConfigParser(cfg *config, options flags.Options) *flags.Parser {
 // The above results in bmd functioning properly without any config settings
 // while still allowing the user to override settings with config files and
 // command line options. Command line options always take precedence.
-func loadConfig(ignoreCL bool) (*config, []string, error) {
+func loadConfig(isTest bool) (*config, []string, error) {
 	// Default config.
 	cfg := config{
 		ConfigFile:     defaultConfigFile,
@@ -338,6 +363,7 @@ func loadConfig(ignoreCL bool) (*config, []string, error) {
 		MaxUpPerPeer:   defaultMaxUpPerPeer,
 		MaxOutbound:    defaultMaxOutbound,
 		RequestExpire:  defaultRequestTimeout,
+		dnsSeeds:       defaultDNSSeeds,
 	}
 
 	// Pre-parse the command line options to see if an alternative config
@@ -346,7 +372,7 @@ func loadConfig(ignoreCL bool) (*config, []string, error) {
 	// the final parse below.
 	preCfg := cfg
 	var err error
-	if !ignoreCL {
+	if !isTest {
 		preParser := newConfigParser(&preCfg, flags.HelpFlag)
 		_, err = preParser.Parse()
 		if err != nil {
@@ -384,7 +410,7 @@ func loadConfig(ignoreCL bool) (*config, []string, error) {
 	}
 
 	var remainingArgs []string
-	if !ignoreCL {
+	if !isTest {
 		// Parse command line options again to ensure they take precedence.
 		remainingArgs, err = parser.Parse()
 		if err != nil {
@@ -395,28 +421,20 @@ func loadConfig(ignoreCL bool) (*config, []string, error) {
 		}
 	}
 
-	// Create the home directory if it doesn't already exist.
 	funcName := "loadConfig"
-	err = os.MkdirAll(bmdHomeDir, 0700)
-	if err != nil {
-		// Show a nicer error message if it's because a symlink is
-		// linked to a directory that does not exist (probably because
-		// it's not mounted).
-		if e, ok := err.(*os.PathError); ok && os.IsExist(err) {
-			if link, lerr := os.Readlink(e.Path); lerr == nil {
-				str := "is symlink %s -> %s mounted?"
-				err = fmt.Errorf(str, e.Path, link)
-			}
-		}
 
-		str := "%s: Failed to create home directory: %v"
-		err := fmt.Errorf(str, funcName, err)
-		fmt.Fprintln(os.Stderr, err)
+	// Create the data and log directories if they don't already exist.
+	cfg.DataDir = cleanAndExpandPath(cfg.DataDir)
+	err = createDir(cfg.DataDir, "data")
+	if err != nil {
 		return nil, nil, err
 	}
 
-	cfg.DataDir = cleanAndExpandPath(cfg.DataDir)
 	cfg.LogDir = cleanAndExpandPath(cfg.LogDir)
+	err = createDir(cfg.LogDir, "log")
+	if err != nil {
+		return nil, nil, err
+	}
 
 	// Special show command to list supported subsystems and exit.
 	if cfg.DebugLevel == "show" {
@@ -502,7 +520,7 @@ func loadConfig(ignoreCL bool) (*config, []string, error) {
 	// we are to connect to.
 	if len(cfg.Listeners) == 0 {
 		cfg.Listeners = []string{
-			net.JoinHostPort("", defaultPort),
+			net.JoinHostPort("", strconv.Itoa(defaultPort)),
 		}
 	}
 
@@ -540,7 +558,7 @@ func loadConfig(ignoreCL bool) (*config, []string, error) {
 		}
 		cfg.RPCListeners = make([]string, 0, len(addrs))
 		for _, addr := range addrs {
-			addr = net.JoinHostPort(addr, defaultRPCPort)
+			addr = net.JoinHostPort(addr, strconv.Itoa(defaultRPCPort))
 			cfg.RPCListeners = append(cfg.RPCListeners, addr)
 		}
 	}

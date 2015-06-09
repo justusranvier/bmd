@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	mrand "math/rand"
 	"net"
 	"runtime"
 	"strconv"
@@ -24,6 +25,13 @@ import (
 	"github.com/monetas/bmd/database"
 	"github.com/monetas/bmd/peer"
 	"github.com/monetas/bmutil/wire"
+)
+
+const (
+	// These constants are used by the DNS seed code to pick a random last seen
+	// time.
+	secondsIn3Days int32 = 24 * 60 * 60 * 3
+	secondsIn4Days int32 = 24 * 60 * 60 * 4
 )
 
 const (
@@ -94,26 +102,6 @@ func newPeerState(maxOutbound int) *peerState {
 	}
 }
 
-// DefaultPeer represents a peer that the server connects to by default.
-type DefaultPeer struct {
-	addr      string
-	stream    uint32
-	permanent bool
-}
-
-// The list of default peers.
-var defaultPeers = []*DefaultPeer{
-	&DefaultPeer{"5.45.99.75:8444", 1, true},
-	&DefaultPeer{"75.167.159.54:8444", 1, true},
-	&DefaultPeer{"95.165.168.168:8444", 1, true},
-	&DefaultPeer{"85.180.139.241:8444", 1, true},
-	&DefaultPeer{"158.222.211.81:8080", 1, true},
-	&DefaultPeer{"178.62.12.187:8448", 1, true},
-	&DefaultPeer{"24.188.198.204:8111", 1, true},
-	&DefaultPeer{"109.147.204.113:1195", 1, true},
-	&DefaultPeer{"178.11.46.221:8444", 1, true},
-}
-
 // server provides a bitmssage server for handling communications to and from
 // bitcoin peers.
 type server struct {
@@ -134,6 +122,7 @@ type server struct {
 	quit          chan struct{}
 	db            database.Db
 	rpcServer     *rpcServer
+	nat           NAT
 }
 
 // randomUint16Number returns a random uint16 in a specified input range. Note
@@ -191,7 +180,7 @@ func (s *server) handleAddPeerMsg(p *bmpeer) bool {
 		// they should be rescheduled.
 		return false
 	}
-	peerLog.Infof(p.peer.PrependAddr("added to server."))
+	peerLog.Infof(p.peer.PrependAddr("Added to server."))
 
 	// Add the new peer and start it.
 	if p.inbound {
@@ -359,6 +348,7 @@ func (s *server) handleQuery(querymsg interface{}) {
 // listenHandler is the main listener which accepts incoming connections for the
 // server. It must be run as a goroutine.
 func (s *server) listenHandler(listener peer.Listener) {
+	serverLog.Infof("Server listening on %s", listener.Addr())
 	for atomic.LoadInt32(&s.shutdown) == 0 {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -369,51 +359,53 @@ func (s *server) listenHandler(listener peer.Listener) {
 	s.wg.Done()
 }
 
-// // seedFromDNS uses DNS seeding to populate the address manager with peers.
-// func (s *server) seedFromDNS() {
-// 	addresses := make([]*wire.NetAddress, 10)
-// 	i := 0
-// 	ip := net.ParseIP("23.239.9.147")
-// 	addresses[i] = new(wire.NetAddress)
-// 	addresses[i].SetAddress(ip, 8444)
-// 	i++
-// 	ip = net.ParseIP("98.218.125.214")
-// 	addresses[i] = new(wire.NetAddress)
-// 	addresses[i].SetAddress(ip, 8444)
-// 	i++
-// 	ip = net.ParseIP("192.121.170.162")
-// 	addresses[i] = new(wire.NetAddress)
-// 	addresses[i].SetAddress(ip, 8444)
-// 	i++
-// 	ip = net.ParseIP("108.61.72.12")
-// 	addresses[i] = new(wire.NetAddress)
-// 	addresses[i].SetAddress(ip, 28444)
-// 	i++
-// 	ip = net.ParseIP("158.222.211.81")
-// 	addresses[i] = new(wire.NetAddress)
-// 	addresses[i].SetAddress(ip, 8080)
-// 	i++
-// 	ip = net.ParseIP("79.163.240.110")
-// 	addresses[i] = new(wire.NetAddress)
-// 	addresses[i].SetAddress(ip, 8446)
-// 	i++
-// 	ip = net.ParseIP("178.62.154.250")
-// 	addresses[i] = new(wire.NetAddress)
-// 	addresses[i].SetAddress(ip, 8444)
-// 	i++
-// 	ip = net.ParseIP("178.62.155.6")
-// 	addresses[i] = new(wire.NetAddress)
-// 	addresses[i].SetAddress(ip, 8444)
-// 	i++
-// 	ip = net.ParseIP("178.62.155.8")
-// 	addresses[i] = new(wire.NetAddress)
-// 	addresses[i].SetAddress(ip, 8444)
-// 	i++
-// 	ip = net.ParseIP("68.42.42.120")
-// 	addresses[i] = new(wire.NetAddress)
-// 	addresses[i].SetAddress(ip, 8444)
-// 	s.addrManager.AddAddresses(addresses, addresses[0])
-// }
+// seedFromDNS uses DNS seeding to populate the address manager with peers.
+func (s *server) seedFromDNS() {
+	// Nothing to do if DNS seeding is disabled.
+	if cfg.DisableDNSSeed {
+		return
+	}
+
+	for _, seeder := range cfg.dnsSeeds {
+		go func(seeder string) {
+			randSource := mrand.New(mrand.NewSource(time.Now().UnixNano()))
+			host, port, _ := net.SplitHostPort(seeder)
+
+			seedpeers, err := dnsDiscover(host)
+			if err != nil {
+				serverLog.Warnf("DNS discovery failed on seed %s: %v", seeder, err)
+				return
+			}
+			numPeers := len(seedpeers)
+
+			serverLog.Infof("%d addresses found from DNS seed %s", numPeers, host)
+
+			if numPeers == 0 {
+				return
+			}
+			addresses := make([]*wire.NetAddress, len(seedpeers))
+			// if this errors then we have *real* problems
+			intPort, _ := strconv.Atoi(port)
+			for i, peer := range seedpeers {
+				addresses[i] = new(wire.NetAddress)
+				addresses[i].SetAddress(peer, uint16(intPort))
+				// bitcoind seeds with addresses from
+				// a time randomly selected between 3
+				// and 7 days ago.
+				addresses[i].Timestamp = time.Now().Add(-1 *
+					time.Second * time.Duration(secondsIn3Days+
+					randSource.Int31n(secondsIn4Days)))
+			}
+
+			// Bitcoind uses a lookup of the dns seeder here. This
+			// is rather strange since the values looked up by the
+			// DNS seed lookups will vary quite a lot.
+			// to replicate this behaviour we put all addresses as
+			// having come from the first one.
+			s.addrManager.AddAddresses(addresses, addresses[0])
+		}(seeder)
+	}
+}
 
 // peerHandler is used to handle peer operations such as adding and removing
 // peers to and from the server, banning peers, and broadcasting messages to
@@ -433,7 +425,16 @@ func (s *server) peerHandler() {
 	}
 
 	// Add peers discovered through DNS to the address manager.
-	// s.seedFromDNS()
+	s.seedFromDNS()
+
+	// Start up persistent peers.
+	permanentPeers := cfg.ConnectPeers
+	if len(permanentPeers) == 0 {
+		permanentPeers = cfg.AddPeers
+	}
+	for _, addr := range permanentPeers {
+		s.AddNewPeer(addr, 1, true)
+	}
 
 	// if nothing else happens, wake us up soon.
 	time.AfterFunc(10*time.Second, func() { s.wakeup <- struct{}{} })
@@ -472,7 +473,7 @@ func (s *server) peerHandler() {
 		}
 
 		// Only try connect to more peers if we actually need more.
-		if !s.state.NeedMoreOutbound() ||
+		if !s.state.NeedMoreOutbound() || len(cfg.ConnectPeers) > 0 ||
 			atomic.LoadInt32(&s.shutdown) != 0 {
 			continue
 		}
@@ -586,12 +587,6 @@ func (s *server) RemoveAddr(addr string) error {
 
 // Start begins accepting connections from peers.
 func (s *server) Start() {
-	s.start(defaultPeers)
-}
-
-// start is the real start function. It takes parameters that can be exposed
-// for testing purposes.
-func (s *server) start(startPeers []*DefaultPeer) {
 	// Already started?
 	if atomic.AddInt32(&s.started, 1) != 1 {
 		return
@@ -604,12 +599,14 @@ func (s *server) start(startPeers []*DefaultPeer) {
 		go s.listenHandler(listener)
 	}
 
-	// Start the peer handler which in turn starts the address manager and object manager.
+	// Start the peer handler which in turn starts the address manager and
+	// object manager.
 	s.wg.Add(1)
 	go s.peerHandler()
 
-	for _, dp := range startPeers {
-		s.AddNewPeer(dp.addr, dp.stream, dp.permanent)
+	if s.nat != nil {
+		s.wg.Add(1)
+		go s.upnpUpdateThread()
 	}
 
 	// Start RPC server.
@@ -661,30 +658,28 @@ func (s *server) WaitForShutdown() {
 // listeners on the correct interface "tcp4" and "tcp6". It also properly
 // detects addresses which apply to "all interfaces" and adds the address to
 // both slices.
-func parseListeners(addrs []string) ([]string, []string, bool, error) {
+func parseListeners(addrs []string) ([]string, []string, error) {
 	ipv4ListenAddrs := make([]string, 0, len(addrs)*2)
 	ipv6ListenAddrs := make([]string, 0, len(addrs)*2)
-	haveWildcard := false
 
 	for _, addr := range addrs {
 		host, _, err := net.SplitHostPort(addr)
 		if err != nil {
 			// Shouldn't happen due to already being normalized.
-			return nil, nil, false, err
+			return nil, nil, err
 		}
 
 		// Empty host or host of * on plan9 is both IPv4 and IPv6.
 		if host == "" || (host == "*" && runtime.GOOS == "plan9") {
 			ipv4ListenAddrs = append(ipv4ListenAddrs, addr)
 			ipv6ListenAddrs = append(ipv6ListenAddrs, addr)
-			haveWildcard = true
 			continue
 		}
 
 		// Parse the IP.
 		ip := net.ParseIP(host)
 		if ip == nil {
-			return nil, nil, false, fmt.Errorf("'%s' is not a "+
+			return nil, nil, fmt.Errorf("'%s' is not a "+
 				"valid IP address", host)
 		}
 
@@ -696,7 +691,63 @@ func parseListeners(addrs []string) ([]string, []string, bool, error) {
 			ipv4ListenAddrs = append(ipv4ListenAddrs, addr)
 		}
 	}
-	return ipv4ListenAddrs, ipv6ListenAddrs, haveWildcard, nil
+	return ipv4ListenAddrs, ipv6ListenAddrs, nil
+}
+
+// upnpUpdateThread renews the port mapping lease from the router after every
+// 15 minutes. Must be run as a go routine.
+func (s *server) upnpUpdateThread() {
+	// Go off immediately to prevent code duplication, thereafter we renew
+	// lease every 15 minutes.
+	timer := time.NewTimer(0 * time.Second)
+	first := true
+out:
+	for {
+		select {
+		case <-timer.C:
+			// TODO(oga) pick external port  more cleverly
+			// TODO(oga) know which ports we are listening to on an external net.
+			// TODO(oga) if specific listen port doesn't work then ask for wildcard
+			// listen port?
+			// XXX this assumes timeout is in seconds.
+			listenPort, err := s.nat.AddPortMapping("tcp", defaultPort,
+				defaultPort, "bmd listen port", 20*60)
+			if err != nil {
+				serverLog.Warnf("can't add UPnP port mapping: %v", err)
+			}
+			if first && err == nil {
+				// TODO(oga): look this up periodically to see if upnp domain changed
+				// and so did ip.
+				externalip, err := s.nat.GetExternalAddress()
+				if err != nil {
+					serverLog.Warnf("UPnP can't get external address: %v", err)
+					continue out
+				}
+				na := wire.NewNetAddressIPPort(externalip, uint16(listenPort),
+					1, wire.SFNodeNetwork)
+				err = s.addrManager.AddLocalAddress(na, addrmgr.UpnpPrio)
+				if err != nil {
+					// XXX DeletePortMapping?
+				}
+				serverLog.Warnf("Successfully bound via UPnP to %s", addrmgr.NetAddressKey(na))
+				first = false
+			}
+			timer.Reset(time.Minute * 15)
+		case <-s.quit:
+			break out
+		}
+	}
+
+	timer.Stop()
+
+	err := s.nat.DeletePortMapping("tcp", defaultPort, defaultPort)
+	if err != nil {
+		serverLog.Warnf("unable to remove UPnP port mapping: %v", err)
+	} else {
+		serverLog.Debugf("succesfully disestablished UPnP port mapping")
+	}
+
+	s.wg.Done()
 }
 
 // newDefaultServer returns a new server with the default listener.
@@ -714,71 +765,119 @@ func newServer(listenAddrs []string, db database.Db,
 		return nil, err
 	}
 
-	amgr := addrmgr.New(cfg.DataDir, net.LookupIP)
+	amgr := addrmgr.New(cfg.DataDir, bmdLookup)
 
 	var listeners []peer.Listener
-	ipv4Addrs, ipv6Addrs, wildcard, err := parseListeners(listenAddrs)
-	if err != nil {
-		return nil, err
-	}
-	listeners = make([]peer.Listener, 0, len(ipv4Addrs)+len(ipv6Addrs))
-	discover := true
-
-	// TODO(oga) nonstandard port...
-	if wildcard {
-		port, err := strconv.ParseUint(defaultPort, 10, 16)
+	var nat NAT
+	if !cfg.DisableListen {
+		ipv4Addrs, ipv6Addrs, err := parseListeners(listenAddrs)
 		if err != nil {
-			panic("incorrect config") // shouldn't happen ever
+			return nil, err
 		}
-		addrs, _ := net.InterfaceAddrs()
-		for _, a := range addrs {
-			ip, _, err := net.ParseCIDR(a.String())
+		listeners = make([]peer.Listener, 0, len(ipv4Addrs)+len(ipv6Addrs))
+		discover := true
+
+		if len(cfg.ExternalIPs) != 0 {
+			discover = false
+
+			for _, sip := range cfg.ExternalIPs {
+				eport := uint16(defaultPort)
+				host, portstr, err := net.SplitHostPort(sip)
+				if err != nil {
+					// no port, use default.
+					host = sip
+				} else {
+					port, err := strconv.ParseUint(portstr, 10, 16)
+					if err != nil {
+						serverLog.Warnf("Can not parse port from %s for "+
+							"externalip: %v", sip, err)
+						continue
+					}
+					eport = uint16(port)
+				}
+				// Stream 1 is hardcoded here.
+				na, err := amgr.HostToNetAddress(host, eport, 1, wire.SFNodeNetwork)
+				if err != nil {
+					serverLog.Warnf("Not adding %s as externalip: %v", sip, err)
+					continue
+				}
+
+				err = amgr.AddLocalAddress(na, addrmgr.ManualPrio)
+				if err != nil {
+					addrmgrLog.Warnf("Skipping specified external IP: %v", err)
+				}
+			}
+		} else if discover && cfg.Upnp {
+			nat, err = Discover()
+			if err != nil {
+				serverLog.Warnf("Can't discover upnp: %v", err)
+			}
+			// nil nat here is fine, just means no upnp on network.
+		}
+
+		for _, addr := range ipv4Addrs {
+
+			// Handle wildcards
+			host, portStr, err := net.SplitHostPort(addr)
+			port, _ := strconv.Atoi(portStr)
+
+			// Empty host or host of * on plan9 is both IPv4 and IPv6.
+			if host == "" || (host == "*" && runtime.GOOS == "plan9") {
+				addrs, _ := net.InterfaceAddrs()
+				for _, a := range addrs {
+					ip, _, err := net.ParseCIDR(a.String())
+					if err != nil {
+						continue
+					}
+					// Stream number 1 is hard-coded in here. When we support
+					// streams, this will need to be handled properly.
+					na := wire.NewNetAddressIPPort(ip,
+						uint16(port), 1, wire.SFNodeNetwork)
+					if discover {
+						err = amgr.AddLocalAddress(na, addrmgr.InterfacePrio)
+						if err != nil {
+							addrmgrLog.Debugf("Skipping local address: %v", err)
+						}
+					}
+				}
+			}
+
+			listener, err := listen("tcp4", addr)
 			if err != nil {
 				continue
 			}
-			// Stream number 1 is hard-coded in here. When we support streams,
-			// this will need to be handled properly.
-			na := wire.NewNetAddressIPPort(ip,
-				uint16(port), 1, wire.SFNodeNetwork)
+			listeners = append(listeners, listener)
+
 			if discover {
-				err = amgr.AddLocalAddress(na, addrmgr.InterfacePrio)
-			}
-		}
-	}
-
-	for _, addr := range ipv4Addrs {
-		listener, err := listen("tcp4", addr)
-		if err != nil {
-			continue
-		}
-		listeners = append(listeners, listener)
-
-		if discover {
-			if na, err := amgr.DeserializeNetAddress(addr); err == nil {
-				err = amgr.AddLocalAddress(na, addrmgr.BoundPrio)
-				if err != nil {
+				if na, err := amgr.DeserializeNetAddress(addr); err == nil {
+					err = amgr.AddLocalAddress(na, addrmgr.BoundPrio)
+					if err != nil {
+						addrmgrLog.Debugf("Skipping bound address: %v", err)
+					}
 				}
 			}
 		}
-	}
 
-	for _, addr := range ipv6Addrs {
-		listener, err := listen("tcp6", addr)
-		if err != nil {
-			continue
-		}
-		listeners = append(listeners, listener)
-		if discover {
-			if na, err := amgr.DeserializeNetAddress(addr); err == nil {
-				err = amgr.AddLocalAddress(na, addrmgr.BoundPrio)
+		for _, addr := range ipv6Addrs {
+			listener, err := listen("tcp6", addr)
+			if err != nil {
+				continue
+			}
+			listeners = append(listeners, listener)
+			if discover {
+				if na, err := amgr.DeserializeNetAddress(addr); err == nil {
+					err = amgr.AddLocalAddress(na, addrmgr.BoundPrio)
+					if err != nil {
+						addrmgrLog.Debugf("Skipping bound address: %v", err)
+					}
+				}
 			}
 		}
-	}
 
-	if len(listeners) == 0 {
-		return nil, errors.New("no valid listen address")
+		if len(listeners) == 0 {
+			return nil, errors.New("no valid listen address")
+		}
 	}
-
 	s := server{
 		nonce:       nonce,
 		listeners:   listeners,
@@ -791,6 +890,7 @@ func newServer(listenAddrs []string, db database.Db,
 		query:       make(chan interface{}),
 		quit:        make(chan struct{}),
 		db:          db,
+		nat:         nat,
 	}
 	s.objectManager = newObjectManager(&s)
 

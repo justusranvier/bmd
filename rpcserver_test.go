@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"net"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -247,6 +248,8 @@ func TestRPCConnection(t *testing.T) {
 	cfg.DisableRPC = false
 	cfg.DisableTLS = true
 	cfg.RPCMaxClients = 1
+	cfg.DisableDNSSeed = true
+	defer resetCfg(cfg)()
 
 	// Load rpc listeners.
 	addrs, err := net.LookupHost("localhost")
@@ -255,7 +258,7 @@ func TestRPCConnection(t *testing.T) {
 	}
 	cfg.RPCListeners = make([]string, 0, len(addrs))
 	for _, addr := range addrs {
-		addr = net.JoinHostPort(addr, defaultRPCPort)
+		addr = net.JoinHostPort(addr, strconv.Itoa(defaultRPCPort))
 		cfg.RPCListeners = append(cfg.RPCListeners, addr)
 	}
 	defer backendLog.Flush()
@@ -270,7 +273,7 @@ func TestRPCConnection(t *testing.T) {
 		t.Fatalf("Server creation failed: %s", err)
 	}
 
-	serv.start([]*DefaultPeer{})
+	serv.Start()
 
 	ws, _, err := websocket.DefaultDialer.Dial(rpcLoc, nil)
 	if err != nil {

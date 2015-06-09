@@ -93,7 +93,7 @@ func (p *bmpeer) disconnect() {
 		return
 	}
 	p.peer.Disconnect()
-	peerLog.Info(p.peer.PrependAddr("disconnected."))
+	peerLog.Info(p.peer.PrependAddr("Disconnected."))
 }
 
 // Start starts running the peer.
@@ -479,7 +479,7 @@ func (p *bmpeer) handleInitialConnection() {
 	if !(p.VersionKnown() && p.verAckReceived) {
 		return
 	}
-	//The initial handshake is complete.
+	// The initial handshake is complete.
 
 	p.StatsMtx.Lock()
 	p.handshakeComplete = true
@@ -496,7 +496,7 @@ func (p *bmpeer) handleInitialConnection() {
 		invVectList[i] = &wire.InvVect{Hash: hash}
 	}
 	p.PushInvMsg(invVectList)
-	peerLog.Debug(p.peer.PrependAddr("handshake complete."))
+	peerLog.Debug(p.peer.PrependAddr("Handshake complete."))
 }
 
 // newPeerBase returns a new base bitmessage peer for the provided server and
