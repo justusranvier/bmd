@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"errors"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -30,6 +31,8 @@ type MockConnection struct {
 	reply       chan wire.Message
 	send        chan wire.Message
 	addr        net.Addr
+	mutex       sync.RWMutex
+	failmtx     sync.Mutex
 }
 
 func (mock *MockConnection) WriteMessage(msg wire.Message) error {
@@ -65,9 +68,16 @@ func (mock *MockConnection) MockRead(reset chan struct{}) wire.Message {
 }
 
 func (mock *MockConnection) ReadMessage() (wire.Message, error) {
-	if mock.failure {
+	mock.mutex.RLock()
+	fail := mock.failure
+	mock.mutex.RUnlock()
+
+	if fail {
 		return nil, errors.New("Mock Connection set to fail.")
 	}
+
+	mock.failmtx.Lock()
+	defer mock.failmtx.Unlock()
 
 	select {
 	case msg := <-mock.send:
@@ -110,7 +120,9 @@ func (mock *MockConnection) Close() {
 		return
 	}
 	mock.closed = true
+	mock.mutex.Lock()
 	mock.connected = false
+	mock.mutex.Unlock()
 	close(mock.done)
 
 	// Drain any incoming messages.
@@ -124,20 +136,27 @@ close:
 	}
 }
 
-func (pc *MockConnection) Connected() bool {
-	return pc.connected
+func (mock *MockConnection) Connected() bool {
+	mock.mutex.RLock()
+	defer mock.mutex.RUnlock()
+
+	return mock.connected
 }
 
-func (pc *MockConnection) Connect() error {
-	if pc.connectFail {
+func (mock *MockConnection) Connect() error {
+	if mock.connectFail {
 		return errors.New("Connection set to fail.")
 	}
-	pc.connected = true
+	mock.mutex.Lock()
+	mock.connected = true
+	mock.mutex.Unlock()
 	return nil
 }
 
 func (mock *MockConnection) SetFailure(b bool) {
+	mock.mutex.Lock()
 	mock.failure = b
+	mock.mutex.Unlock()
 
 	if b == true {
 		// Drain any messages being sent now so that WriteMessage will
@@ -152,7 +171,9 @@ func (mock *MockConnection) SetFailure(b bool) {
 		close(mock.failChan)
 
 	} else {
+		mock.failmtx.Lock()
 		mock.failChan = make(chan struct{})
+		mock.failmtx.Unlock()
 	}
 }
 
@@ -384,6 +405,10 @@ func TestQueueInv(t *testing.T) {
 			t.Error("message returned when there should have been none.")
 		}
 	}()
+
+	// Give the other thread some time to confirm that no messages are in the channel.
+	time.Sleep(50 * time.Millisecond)
+	reset <- struct{}{}
 
 	// Send a tick without any invs having been sent.
 	peer.TstSendStart(queue, conn)

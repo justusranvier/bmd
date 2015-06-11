@@ -59,7 +59,7 @@ type bmpeer struct {
 	lastReceipt       time.Time
 	invReceived       bool
 	knownAddresses    map[string]struct{}
-	StatsMtx          sync.Mutex // protects all statistics below here.
+	StatsMtx          sync.RWMutex // protects all statistics below here.
 	versionKnown      bool
 	versionSent       bool
 	verAckReceived    bool
@@ -72,8 +72,8 @@ type bmpeer struct {
 // VersionKnown returns the whether or not the version of a peer is known locally.
 // It is safe for concurrent access.
 func (p *bmpeer) VersionKnown() bool {
-	p.StatsMtx.Lock()
-	defer p.StatsMtx.Unlock()
+	p.StatsMtx.RLock()
+	defer p.StatsMtx.RUnlock()
 
 	return p.versionKnown
 }
@@ -81,8 +81,8 @@ func (p *bmpeer) VersionKnown() bool {
 // HandshakeComplete returns the whether or the initial handshake has been
 // successfully completed. It is safe for concurrent access.
 func (p *bmpeer) HandshakeComplete() bool {
-	p.StatsMtx.Lock()
-	defer p.StatsMtx.Unlock()
+	p.StatsMtx.RLock()
+	defer p.StatsMtx.RUnlock()
 
 	return p.handshakeComplete
 }
@@ -122,8 +122,8 @@ func (p *bmpeer) Stop() {
 // ProtocolVersion returns the peer protocol version in a manner that is safe
 // for concurrent access.
 func (p *bmpeer) ProtocolVersion() uint32 {
-	p.StatsMtx.Lock()
-	defer p.StatsMtx.Unlock()
+	p.StatsMtx.RLock()
+	defer p.StatsMtx.RUnlock()
 
 	return p.protocolVersion
 }
@@ -354,8 +354,11 @@ func (p *bmpeer) HandleVersionMsg(msg *wire.MsgVersion) error {
 // HandleVerAckMsg disconnects if the VerAck was received at the wrong time
 // and otherwise updates the peer's state.
 func (p *bmpeer) HandleVerAckMsg() error {
+	p.StatsMtx.RLock()
+	versionSent := p.versionSent
+	p.StatsMtx.RUnlock()
 	// If no version message has been sent disconnect.
-	if !p.versionSent {
+	if !versionSent {
 		peerLog.Error(p.peer.PrependAddr("Ver ack msg received before version sent."))
 		return errors.New("Version not yet received.")
 	}

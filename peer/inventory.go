@@ -48,7 +48,7 @@ func (I *Inventory) AddRequest(i int) {
 
 // NumRequests is the number of object download requests that have been made.
 func (I *Inventory) NumRequests() int {
-	return int(I.requested)
+	return int(atomic.LoadInt32(&I.requested))
 }
 
 // FilterKnown takes a list of InvVects, adds them to the list of known

@@ -233,25 +233,6 @@ func (s *server) handleBanPeerMsg(p *bmpeer) {
 	s.state.banned[host] = time.Now().Add(cfg.BanDuration)
 }
 
-// handleRelayInvMsg deals with relaying inventory to peers that are not already
-// known to have it. It is invoked from the peerHandler goroutine.
-func (s *server) handleRelayInvMsg(inv []*wire.InvVect) {
-	s.state.forAllPeers(func(p *bmpeer) {
-		if p.peer.Connected() && p.invReceived {
-			ivl := p.inventory.FilterKnown(inv)
-
-			if len(ivl) == 0 {
-				return
-			}
-
-			// Queue the inventory to be relayed with the next batch.
-			// It will be ignored if the peer is already known to
-			// have the inventory.
-			p.send.QueueInventory(ivl)
-		}
-	})
-}
-
 type getConnCountMsg struct {
 	reply chan int32
 }
