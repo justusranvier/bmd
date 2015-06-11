@@ -51,12 +51,8 @@ func TstSwapListen(f func(string, string) (net.Listener, error)) func(string, st
 }
 
 // TstRetrieveObject exposes retrieveObject for testing purposes.
-func TstRetrieveObject(db database.Db, inv *wire.InvVect) wire.Message {
-	obj := retrieveObject(db, inv)
-	if obj == nil {
-		return nil
-	}
-	return obj
+func TstRetrieveObject(db database.Db, inv *wire.InvVect) *wire.MsgObject {
+	return retrieveObject(db, inv)
 }
 
 // tstStart is a special way to start the Send without starting the queue
