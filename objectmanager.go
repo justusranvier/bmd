@@ -30,9 +30,9 @@ const (
 	// name.
 	objectDbNamePrefix = "objects"
 
-	// MaxPeerRequests is the maximum number of outstanding object requests a
+	// maxPeerRequests is the maximum number of outstanding object requests a
 	// may have at any given time.
-	MaxPeerRequests = 120
+	maxPeerRequests = 120
 )
 
 // newPeerMsg signifies a newly connected peer to the object manager.
@@ -151,9 +151,12 @@ func (om *ObjectManager) handleObjectMsg(omsg *objectMsg) {
 		// thus disconnecting legitimate peers. We want to prevent against such
 		// an attack by checking that objects came from peers that we requested
 		// from.
+		// NOTE: PyBitmessage does not do this, so if this actually happens it
+		// should be considered more likely to be an indication of a bug in bmd
+		// itself rather than a malicious peer.
 		objmgrLog.Error(omsg.peer.addr.String(),
 			" Disconnecting because of unrequested object ", invVect.Hash.String()[:8], " received.")
-		omsg.peer.disconnect()
+		om.server.disconPeers <- omsg.peer
 		return
 	}
 
@@ -245,12 +248,14 @@ func (om *ObjectManager) handleInvMsg(imsg *invMsg) {
 
 	// If the request can fit, we just request it from the peer that told us
 	// about it in the first place.
-	if numInvs <= MaxPeerRequests-imsg.peer.inventory.NumRequests() {
+	if numInvs <= maxPeerRequests-imsg.peer.inventory.NumRequests() {
 
 		for _, iv := range requestList[:numInvs] {
+			now := time.Now()
+			objmgrLog.Trace(imsg.peer.addr.String(), " requests ", iv.Hash.String()[:8], " at ", now)
 			om.requested[*iv] = &peerRequest{
 				peer:      imsg.peer,
-				timestamp: time.Now(),
+				timestamp: now,
 			}
 		}
 		objmgrLog.Trace("All are assigned to peer ", imsg.peer.addr.String(),
@@ -323,7 +328,7 @@ func (om *ObjectManager) handleReadyPeer(peer *bmpeer) {
 	objmgrLog.Trace("Assigning objects to peer ", peer.addr.String())
 
 	// If the object is already downloading too much, return.
-	max := MaxPeerRequests - peer.inventory.NumRequests()
+	max := maxPeerRequests - peer.inventory.NumRequests()
 	if max <= 0 {
 		return
 	}
@@ -357,9 +362,11 @@ func (om *ObjectManager) handleReadyPeer(peer *bmpeer) {
 		requestList[assigned] = &newiv
 		delete(om.unknown, iv)
 
+		now := time.Now()
+		objmgrLog.Trace(peer.addr.String(), " requests ", iv.Hash.String()[:8], " at ", now)
 		om.requested[iv] = &peerRequest{
 			peer:      peer,
-			timestamp: time.Now(),
+			timestamp: now,
 		}
 
 		assigned++
@@ -402,8 +409,9 @@ loop:
 // request and set it to timeout within the set duration.
 func (om *ObjectManager) clearRequests(d time.Duration) {
 	now := time.Now()
-	// Collect all peers to be disconnected in one map or we lock up the
-	// objectHandler with too many requests at once.
+	// Collect all peers to be disconnected in one map so that we don't try
+	// to disconnect a peer more than once. Otherwise a channel could be locked
+	// up if many requests from the same peer timed out at once.
 	peerDisconnect := make(map[*bmpeer]struct{})
 	for hash, p := range om.requested {
 		// if request has expired
@@ -423,20 +431,13 @@ func (om *ObjectManager) clearRequests(d time.Duration) {
 						p.timestamp.Add(d*time.Duration(peerQueueSize)).Before(now),
 						"; cond 2 = ", p.peer.lastReceipt.Add(d).Before(now))))
 
+					om.server.disconPeers <- p.peer // we're done with this malicious peer
+
 					peerDisconnect[p.peer] = struct{}{}
 				}
 			}
 		}
 	}
-
-	// Disconnect the peers gradually in a separate go routine so as not
-	// to deluge the object manager with requests.
-	go func() {
-		for peer := range peerDisconnect {
-			peer.disconnect() // we're done with this malicious peer
-			time.Sleep(time.Second)
-		}
-	}()
 }
 
 // handleRelayInvMsg deals with relaying inventory to peers that are not already
@@ -496,6 +497,9 @@ func (om *ObjectManager) objectHandler() {
 		case m := <-om.msgChan:
 			switch msg := m.(type) {
 
+			case *readyPeerMsg:
+				om.handleReadyPeer((*bmpeer)(msg))
+
 			case *newPeerMsg:
 				om.handleNewPeer(msg.peer)
 
@@ -507,9 +511,6 @@ func (om *ObjectManager) objectHandler() {
 
 			case *donePeerMsg:
 				om.handleDonePeer(msg.peer)
-
-			case *readyPeerMsg:
-				om.handleReadyPeer((*bmpeer)(msg))
 			}
 		}
 	}
@@ -532,7 +533,7 @@ func (om *ObjectManager) ReadyPeer(p *bmpeer) {
 		return
 	}
 
-	om.msgChan <- &p
+	om.msgChan <- (*readyPeerMsg)(p)
 }
 
 // QueueObject adds the passed object message and peer to the object handling

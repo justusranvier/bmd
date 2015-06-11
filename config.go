@@ -36,8 +36,8 @@ const (
 	defaultDbType         = "memdb"
 	defaultPort           = 8444
 	defaultRPCPort        = 8442
-	defaultMaxUpPerPeer   = 1024 * 1024 // 1MBps
-	defaultMaxDownPerPeer = 1024 * 1024
+	defaultMaxUpPerPeer   = 2 * 1024 * 1024 // 2MBps
+	defaultMaxDownPerPeer = 2 * 1024 * 1024 // 2MBps
 	defaultMaxOutbound    = 10
 	defaultRequestTimeout = time.Minute * 3
 )

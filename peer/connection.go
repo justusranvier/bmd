@@ -68,6 +68,7 @@ func (pc *connection) WriteMessage(msg wire.Message) error {
 	pc.bytesSent += uint64(n)
 	pc.lastWrite = time.Now()
 	pc.maxUp.Transfer(float64(n))
+	pc.idleTimer.Reset(pc.idleTimeout)
 	pc.sentMtx.Unlock()
 
 	if err != nil {
@@ -97,6 +98,7 @@ func (pc *connection) ReadMessage() (wire.Message, error) {
 	pc.bytesReceived += uint64(n)
 	pc.lastRead = time.Now()
 	pc.maxDown.Transfer(float64(n))
+	pc.idleTimer.Reset(pc.idleTimeout)
 	pc.receivedMtx.Unlock()
 
 	if err != nil {
@@ -106,8 +108,6 @@ func (pc *connection) ReadMessage() (wire.Message, error) {
 		pc.Close()
 		return nil, err
 	}
-
-	pc.idleTimer.Reset(pc.idleTimeout)
 
 	return msg, nil
 }
@@ -203,7 +203,6 @@ func NewConnection(addr net.Addr, maxDown, maxUp int64) Connection {
 
 	pc.idleTimer = time.AfterFunc(pc.idleTimeout, func() {
 		pc.WriteMessage(&wire.MsgPong{})
-		pc.idleTimer.Reset(idleTimeout)
 	})
 
 	pc.idleTimer.Stop()

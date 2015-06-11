@@ -172,6 +172,7 @@ func (a *AddrManager) updateAddress(netAddr, srcAddr *wire.NetAddress) {
 	}
 
 	addr := NetAddressKey(netAddr)
+	// Is the address already known to the address manager?
 	ka := a.find(netAddr)
 	if ka != nil {
 		// TODO(oga) only update addresses periodically.
@@ -217,9 +218,14 @@ func (a *AddrManager) updateAddress(netAddr, srcAddr *wire.NetAddress) {
 		// XXX time penalty?
 	}
 
-	bucket := a.getNewBucket(netAddr, srcAddr)
+	// If we get to this part of the function, then netAddr is not in a tried
+	// bucket and might be in one or more new buckets. If this is the first time
+	// we've seen the address, then it will not be in any bucket. If it is already
+	// in a new bucket, it might be added to anothter new bucket.
 
-	// Already exists?
+	// This is a random number, but it might happen to be the same as it was
+	// before.
+	bucket := a.getNewBucket(netAddr, srcAddr)
 	if _, ok := a.addrNew[bucket][addr]; ok {
 		return
 	}
@@ -235,7 +241,7 @@ func (a *AddrManager) updateAddress(netAddr, srcAddr *wire.NetAddress) {
 	a.addrNew[bucket][addr] = ka
 
 	log.Tracef("Added new address %s for a total of %d addresses", addr,
-		a.nTried+a.nNew)
+		a.nNew+a.nTried)
 }
 
 // expireNew makes space in the new buckets by expiring the really bad entries.
