@@ -33,6 +33,23 @@ const (
 	// maxPeerRequests is the maximum number of outstanding object requests a
 	// may have at any given time.
 	maxPeerRequests = 120
+
+	// unsentObjectPenaltyTimeout is used to treat object request timeouts
+	// differently during the initial download from how they are treated under
+	// normal operation. Given that there are tens of thousands of messages in
+	// the network at any one time, some messages will expire and be deleted by
+	// peers before we can get around to downloading them. Therefore, we do not
+	// want to consider an expired object request always to be malicious,
+	// especially during the initial download. Otherwise, it is possible for
+	// an object that has expired to be requested from peer after peer without
+	// being received. unsentObjectPenaltyTimeout specifies the amount of time
+	// that an object can be known about without being received before it is
+	// assumed to have expired.
+	unsentObjectPenaltyTimeout = 10 * time.Minute
+
+	// maxQueueForRequestTimeoutPenalty is the minimum number of requests a peer
+	// must have before object request timeouts are treated more leniently.
+	maxQueueForRequestTimeoutPenalty = 10
 )
 
 // newPeerMsg signifies a newly connected peer to the object manager.
@@ -62,8 +79,11 @@ type donePeerMsg struct {
 // peerRequest represents the peer from which an object was requested along with
 // the timestamp.
 type peerRequest struct {
-	peer      *bmpeer
+	peer *bmpeer
+	// The time the request was made.
 	timestamp time.Time
+	// The time that the inv was first heard about.
+	knownSince time.Time
 }
 
 // readyPeerMsg signals that a peer is ready to download more objects.
@@ -84,7 +104,7 @@ type ObjectManager struct {
 
 	// The set of objects which we do not have and which have not been
 	// assigned to peers for download.
-	unknown map[wire.InvVect]struct{}
+	unknown map[wire.InvVect]time.Time
 
 	// The set of objects which have been assigned to peers for download.
 	requested map[wire.InvVect]*peerRequest
@@ -124,11 +144,11 @@ func (om *ObjectManager) handleDonePeer(p *bmpeer) {
 	reassignInvs := 0
 	// Remove requested objects from the global map so that they will be fetched
 	// from elsewhere next time we get an inv.
-	for invHash, objPeer := range om.requested {
-		if objPeer.peer == p { // peer matches
+	for invHash, objRequest := range om.requested {
+		if objRequest.peer == p { // peer matches
 			delete(om.requested, invHash)
 
-			om.unknown[invHash] = struct{}{}
+			om.unknown[invHash] = objRequest.knownSince
 
 			reassignInvs++
 		}
@@ -254,8 +274,9 @@ func (om *ObjectManager) handleInvMsg(imsg *invMsg) {
 			now := time.Now()
 			objmgrLog.Trace(imsg.peer.addr.String(), " requests ", iv.Hash.String()[:8], " at ", now)
 			om.requested[*iv] = &peerRequest{
-				peer:      imsg.peer,
-				timestamp: now,
+				peer:       imsg.peer,
+				timestamp:  now,
+				knownSince: now,
 			}
 		}
 		objmgrLog.Trace("All are assigned to peer ", imsg.peer.addr.String(),
@@ -274,9 +295,10 @@ func (om *ObjectManager) handleInvMsg(imsg *invMsg) {
 		return
 	}
 
+	now := time.Now()
 	// Add the new invs to the list of unknown invs.
 	for _, iv := range requestList[:numInvs] {
-		om.unknown[*iv] = struct{}{}
+		om.unknown[*iv] = now
 	}
 
 	// If the number of unknown objects had been zero before, we have to do
@@ -339,7 +361,7 @@ func (om *ObjectManager) handleReadyPeer(peer *bmpeer) {
 	// (for now at least) object request handling does not work like a queue.
 	// We might ask for new invs earlier than old invs, or with any order at all.
 	//objmgrLog.Trace("Looping through unknown objects. Max is ", max)
-	for iv := range om.unknown {
+	for iv, knownSince := range om.unknown {
 		//objmgrLog.Trace("inv : ", iv.Hash.String())
 		if assigned >= max {
 			break
@@ -365,8 +387,9 @@ func (om *ObjectManager) handleReadyPeer(peer *bmpeer) {
 		now := time.Now()
 		objmgrLog.Trace(peer.addr.String(), " requests ", iv.Hash.String()[:8], " at ", now)
 		om.requested[iv] = &peerRequest{
-			peer:      peer,
-			timestamp: now,
+			peer:       peer,
+			timestamp:  now,
+			knownSince: knownSince,
 		}
 
 		assigned++
@@ -420,9 +443,18 @@ func (om *ObjectManager) clearRequests(d time.Duration) {
 			// If the peer has a long queue of requested objects, then don't
 			// disconnect it unless it has not received SOME object recently enough,
 			// or if the request is expired by a much longer time.
-			if peerQueueSize < 10 ||
+			if peerQueueSize < maxQueueForRequestTimeoutPenalty ||
 				p.timestamp.Add(d*time.Duration(peerQueueSize)).Before(now) ||
 				p.peer.lastReceipt.Add(d).Before(now) {
+
+				// If more than ten minutes (default) has passed since the object
+				// manager has first learned about the object, then the object
+				// may have just expired. Therefore, drop the request without
+				// penalizing the peer.
+				if p.knownSince.Add(unsentObjectPenaltyTimeout).Before(p.timestamp) {
+					delete(om.requested, hash)
+					continue
+				}
 
 				if _, ok := peerDisconnect[p.peer]; !ok {
 					objmgrLog.Debug(p.peer.peer.PrependAddr(fmt.Sprint(
@@ -502,6 +534,7 @@ func (om *ObjectManager) objectHandler() {
 				continue
 			}
 			for _, ex := range expired {
+
 				inv := &wire.InvVect{Hash: *ex}
 
 				for peer := range om.peers {
@@ -615,7 +648,7 @@ func newObjectManager(s *server) *ObjectManager {
 	return &ObjectManager{
 		server:       s,
 		requested:    make(map[wire.InvVect]*peerRequest),
-		unknown:      make(map[wire.InvVect]struct{}),
+		unknown:      make(map[wire.InvVect]time.Time),
 		msgChan:      make(chan interface{}),
 		quit:         make(chan struct{}),
 		relayInvChan: make(chan *wire.InvVect, objectManagerQueueSize),

@@ -5,21 +5,11 @@
 package peer_test
 
 import (
-	"math/rand"
 	"testing"
 
 	"github.com/monetas/bmd/peer"
 	"github.com/monetas/bmutil/wire"
 )
-
-func randomShaHash() *wire.ShaHash {
-	b := make([]byte, 32)
-	for i := 0; i < 32; i++ {
-		b[i] = byte(rand.Intn(256))
-	}
-	hash, _ := wire.NewShaHash(b)
-	return hash
-}
 
 func TestNew(t *testing.T) {
 	if peer.NewMruInventoryMap(2) == nil {

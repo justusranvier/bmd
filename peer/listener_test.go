@@ -5,84 +5,28 @@
 package peer_test
 
 import (
-	"errors"
 	"net"
 	"testing"
 	"time"
 
+	"github.com/DanielKrawisz/mocknet"
 	"github.com/monetas/bmd/peer"
 	"github.com/monetas/bmutil/wire"
 )
-
-// mockListener implements the Listener interface and is used to mock
-// a listener to test the server and peers.
-type MockListener struct {
-	incoming     chan net.Conn
-	disconnect   chan struct{}
-	localAddr    net.Addr
-	disconnected bool
-}
-
-// Accept waits for and returns the next connection to the listener.
-func (ml *MockListener) Accept() (net.Conn, error) {
-	if ml.disconnected {
-		return nil, errors.New("Listner disconnected.")
-	}
-	select {
-	case <-ml.disconnect:
-		ml.disconnected = true
-		return nil, errors.New("Listener disconnected.")
-	case m := <-ml.incoming:
-		return m, nil
-	}
-}
-
-// Close closes the listener.
-// Any blocked Accept operations will be unblocked and return errors.
-func (ml *MockListener) Close() error {
-	ml.disconnect <- struct{}{}
-	return nil
-}
-
-// Addr returns the listener's network address.
-func (ml *MockListener) Addr() net.Addr {
-	return ml.localAddr
-}
-
-// startNewMockListener is a function that can be swapped with the listen var for testing purposes.
-func startNewMockListener(localAddr net.Addr, incoming chan net.Conn, disconnect chan struct{}) func(service, addr string) (net.Listener, error) {
-	stopped := false
-
-	return func(service, addr string) (net.Listener, error) {
-		if stopped {
-			return nil, errors.New("Failed.")
-		}
-		stopped = true // It only works once.
-		return &MockListener{
-			incoming:   incoming,
-			disconnect: disconnect,
-			localAddr:  localAddr,
-		}, nil
-	}
-}
 
 func TestConnectionAndListener(t *testing.T) {
 	remoteAddr := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 8333}
 	localAddr := &net.TCPAddr{IP: net.ParseIP("192.168.0.1"), Port: 8333}
 
-	incoming := make(chan net.Conn)
+	mockListener := mocknet.NewListener(localAddr, false)
 
-	listener := peer.TstNewListener(&MockListener{
-		incoming:   incoming,
-		disconnect: make(chan struct{}),
-		localAddr:  localAddr,
-	})
+	listener := peer.TstNewListener(mockListener)
 
 	if listener.Addr() != localAddr {
 		t.Errorf("Wrong local addr returned. Expected %s, got %s.", localAddr, listener.Addr())
 	}
 
-	mockConn := NewMockConn(localAddr, remoteAddr, false)
+	mockConn := mocknet.NewConn(localAddr, remoteAddr, false)
 
 	message1 := wire.NewMsgUnknownObject(617, time.Now(), wire.ObjectType(5), 12, 1, []byte{87, 99, 23, 56})
 	message2 := wire.NewMsgUnknownObject(616, time.Now(), wire.ObjectType(5), 12, 1, []byte{22, 55, 89, 107})
@@ -154,7 +98,7 @@ func TestConnectionAndListener(t *testing.T) {
 	}()
 
 	// Send a mock connection to test Accept()
-	incoming <- mockConn
+	mockListener.MockOpenConnection(mockConn)
 
 	<-testStep
 
@@ -162,10 +106,10 @@ func TestConnectionAndListener(t *testing.T) {
 	listener.Close()
 
 	// Write a message to the connection.
-	mockConn.MockWrite(message1)
+	MockWrite(mockConn, message1)
 
 	// Write a message to the connection.
-	msg := mockConn.MockRead()
+	msg := MockRead(mockConn)
 
 	msgObj, _ := wire.ToMsgObject(msg)
 	hashtest := msgObj.InventoryHash()
@@ -182,8 +126,9 @@ func TestConnectionAndListener(t *testing.T) {
 
 func TestListen(t *testing.T) {
 	localAddr := &net.TCPAddr{IP: net.ParseIP("192.168.0.1"), Port: 8333}
+	builder := mocknet.NewListenerBuilder(localAddr, 1)
 
-	l := peer.TstSwapListen(startNewMockListener(localAddr, make(chan net.Conn), make(chan struct{})))
+	l := peer.TstSwapListen(builder.Listen)
 	defer peer.TstSwapListen(l)
 
 	listen, err := peer.Listen("tcp4", "8445")

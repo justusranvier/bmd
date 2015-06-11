@@ -169,7 +169,8 @@ out:
 		case *wire.MsgGetData:
 			err = p.logic.HandleGetDataMsg(msg)
 
-		case *wire.MsgGetPubKey, *wire.MsgPubKey, *wire.MsgMsg, *wire.MsgBroadcast, *wire.MsgUnknownObject:
+		case *wire.MsgGetPubKey, *wire.MsgPubKey, *wire.MsgMsg,
+			*wire.MsgBroadcast, *wire.MsgUnknownObject:
 			objMsg, _ := wire.ToMsgObject(rmsg)
 			err = p.logic.HandleObjectMsg(objMsg)
 

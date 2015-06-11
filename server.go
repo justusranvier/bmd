@@ -103,7 +103,7 @@ func newPeerState(maxOutbound int) *peerState {
 }
 
 // server provides a bitmssage server for handling communications to and from
-// bitcoin peers.
+// bitmessage peers.
 type server struct {
 	nonce         uint64
 	listeners     []peer.Listener
