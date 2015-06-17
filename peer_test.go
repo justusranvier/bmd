@@ -13,6 +13,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -115,14 +116,29 @@ type OutboundHandshakePeerTester struct {
 	handshakeComplete bool
 	response          *PeerAction
 	msgAddr           wire.Message
+	mutex             sync.RWMutex
 }
 
 func (peer *OutboundHandshakePeerTester) OnStart() *PeerAction {
 	return nil
 }
 
+func (peer *OutboundHandshakePeerTester) VersionReceived() bool {
+	peer.mutex.RLock()
+	defer peer.mutex.RUnlock()
+
+	return peer.versionReceived
+}
+
+func (peer *OutboundHandshakePeerTester) HandshakeComplete() bool {
+	peer.mutex.RLock()
+	defer peer.mutex.RUnlock()
+
+	return peer.handshakeComplete
+}
+
 func (peer *OutboundHandshakePeerTester) OnMsgVersion(version *wire.MsgVersion) *PeerAction {
-	if peer.versionReceived {
+	if peer.VersionReceived() {
 		return &PeerAction{Err: errors.New("Two version messages received")}
 	}
 	peer.versionReceived = true
@@ -130,10 +146,12 @@ func (peer *OutboundHandshakePeerTester) OnMsgVersion(version *wire.MsgVersion) 
 }
 
 func (peer *OutboundHandshakePeerTester) OnMsgVerAck(p *wire.MsgVerAck) *PeerAction {
-	if !peer.versionReceived {
+	if !peer.VersionReceived() {
 		return &PeerAction{Err: errors.New("Expecting version message first.")}
 	}
+	peer.mutex.Lock()
 	peer.handshakeComplete = true
+	peer.mutex.Unlock()
 	return &PeerAction{
 		Messages:            []wire.Message{peer.msgAddr},
 		InteractionComplete: true,
@@ -142,28 +160,28 @@ func (peer *OutboundHandshakePeerTester) OnMsgVerAck(p *wire.MsgVerAck) *PeerAct
 }
 
 func (peer *OutboundHandshakePeerTester) OnMsgAddr(p *wire.MsgAddr) *PeerAction {
-	if peer.handshakeComplete {
+	if peer.HandshakeComplete() {
 		return nil
 	}
 	return &PeerAction{Err: errors.New("Not allowed before handshake is complete.")}
 }
 
 func (peer *OutboundHandshakePeerTester) OnMsgInv(p *wire.MsgInv) *PeerAction {
-	if peer.handshakeComplete {
+	if peer.HandshakeComplete() {
 		return nil
 	}
 	return &PeerAction{Err: errors.New("Not allowed before handshake is complete.")}
 }
 
 func (peer *OutboundHandshakePeerTester) OnMsgGetData(p *wire.MsgGetData) *PeerAction {
-	if peer.handshakeComplete {
+	if peer.HandshakeComplete() {
 		return nil
 	}
 	return &PeerAction{Err: errors.New("Not allowed before handshake is complete.")}
 }
 
 func (peer *OutboundHandshakePeerTester) OnSendData(invVect []*wire.InvVect) *PeerAction {
-	if peer.handshakeComplete {
+	if peer.HandshakeComplete() {
 		return nil
 	}
 	return &PeerAction{Err: errors.New("Object message not allowed before handshake is complete.")}
@@ -507,6 +525,9 @@ type MockConnection struct {
 
 	// Whether the report has already been submitted.
 	reported int32
+
+	// A mutex for data that might be accessed by different threads.
+	mutex sync.RWMutex
 }
 
 func (mock *MockConnection) ReadMessage() (wire.Message, error) {
@@ -537,11 +558,16 @@ func (mock *MockConnection) ReadMessage() (wire.Message, error) {
 func (mock *MockConnection) WriteMessage(rmsg wire.Message) error {
 	// We can keep receiving messages after the interaction is done; we just
 	// ignore them.	 We are waiting to see whether the peer disconnects.
-	if mock.interactionComplete {
+	mock.mutex.RLock()
+	ic := mock.interactionComplete
+	mock.mutex.RUnlock()
+	if ic {
 		return nil
 	}
 
+	mock.mutex.Lock()
 	mock.timer.Reset(time.Second)
+	mock.mutex.Unlock()
 	mock.handleAction(mock.handleMessage(rmsg))
 	return nil
 }
@@ -549,11 +575,16 @@ func (mock *MockConnection) WriteMessage(rmsg wire.Message) error {
 func (mock *MockConnection) RequestData(invVect []*wire.InvVect) error {
 	// We can keep receiving messages after the interaction is done; we just ignore them.
 	// We are waiting to see whether the peer disconnects.
-	if mock.interactionComplete {
+	mock.mutex.RLock()
+	ic := mock.interactionComplete
+	mock.mutex.RUnlock()
+	if ic {
 		return nil
 	}
 
+	mock.mutex.Lock()
 	mock.timer.Reset(time.Second)
+	mock.mutex.Unlock()
 	mock.handleAction(mock.peerTest.OnSendData(invVect))
 	return nil
 }
@@ -627,9 +658,11 @@ func (mock *MockConnection) handleAction(action *PeerAction) {
 		return
 	}
 
+	mock.mutex.Lock()
 	mock.interactionComplete = mock.interactionComplete || action.InteractionComplete
 
 	mock.disconnectExpected = mock.disconnectExpected || action.DisconnectExpected
+	mock.mutex.Unlock()
 
 	if action.Messages != nil {
 		mock.reply <- action.Messages
@@ -638,7 +671,10 @@ func (mock *MockConnection) handleAction(action *PeerAction) {
 
 // ConnectionClosed is called when the real peer closes the connection to the mock peer.
 func (mock *MockConnection) ConnectionClosed() {
-	if !mock.interactionComplete &&
+	mock.mutex.RLock()
+	ic := mock.interactionComplete
+	mock.mutex.RUnlock()
+	if !ic &&
 		(!mock.disconnectExpected ||
 			(mock.msgQueue != nil && mock.queuePlace < len(mock.msgQueue))) {
 		mock.Done(errors.New("Connection closed prematurely."))
@@ -652,8 +688,10 @@ func (mock *MockConnection) Done(err error) {
 		// The report has already been submitted.
 		return
 	}
+	mock.mutex.Lock()
 	mock.timer.Stop()
 	mock.interactionComplete = true
+	mock.mutex.Unlock()
 	mock.report <- TestReport{err, mock.objectData}
 }
 
@@ -665,9 +703,11 @@ func (mock *MockConnection) BeginTest() {
 		return
 	}
 
+	mock.mutex.Lock()
 	mock.interactionComplete = mock.interactionComplete || action.InteractionComplete
 
 	mock.disconnectExpected = mock.disconnectExpected || action.DisconnectExpected
+	mock.mutex.Unlock()
 
 	if action.Messages == nil {
 		return
@@ -691,8 +731,12 @@ func NewMockConnection(localAddr, remoteAddr net.Addr, report chan TestReport, p
 		objectData:          make([]*wire.ShaHash, 0),
 	}
 
+	mock.mutex.Lock()
 	mock.timer = time.AfterFunc(time.Millisecond*100, func() {
-		if !mock.interactionComplete {
+		mock.mutex.RLock()
+		ic := mock.interactionComplete
+		mock.mutex.RUnlock()
+		if !ic {
 			if mock.disconnectExpected {
 				mock.Done(errors.New("Peer stopped interacting when it was expected to disconnect."))
 			} else {
@@ -702,6 +746,7 @@ func NewMockConnection(localAddr, remoteAddr net.Addr, report chan TestReport, p
 			mock.Done(nil)
 		}
 	})
+	mock.mutex.Unlock()
 
 	mock.BeginTest()
 
@@ -773,9 +818,7 @@ func getMemDb(msgs []*wire.MsgObject) database.Db {
 	return db
 }
 
-var expires = time.Now().Add(2 * time.Minute)
-
-//var expired = time.Now().Add(-10 * time.Minute).Add(-3 * time.Hour)
+var expires = time.Now().Add(5 * time.Minute)
 
 // A set of pub keys to create fake objects for testing the database.
 var pubkey = []wire.PubKey{
@@ -865,6 +908,15 @@ func init() {
 		binary.BigEndian.PutUint64(b, nonce)
 		testObj[i], _ = wire.DecodeMsgObject(b)
 	}
+
+	// Load config
+	var err error
+	cfg, _, err = loadConfig(true)
+	if err != nil {
+		panic("Config failed to load.")
+	}
+	cfg.MaxPeers = 1
+	cfg.DisableDNSSeed = true
 }
 
 // TestOutboundPeerHandshake tests the initial handshake for an outbound peer, ie,
@@ -877,7 +929,7 @@ func init() {
 func TestOutboundPeerHandshake(t *testing.T) {
 	// A channel for the mock peer to communicate with the test.
 	report := make(chan TestReport)
-	testDone := make(chan struct{})
+	//testDone := make(chan struct{})
 
 	streams := []uint32{1}
 	nonce, _ := wire.RandomUint64()
@@ -938,16 +990,7 @@ func TestOutboundPeerHandshake(t *testing.T) {
 		}
 	}
 
-	// Load config.
-	var err error
-	cfg, _, err = loadConfig(true)
-	if err != nil {
-		t.Fatalf("Config failed to load.")
-	}
-	cfg.MaxPeers = 1
 	cfg.ConnectPeers = []string{"5.45.99.75:8444"}
-	cfg.DisableDNSSeed = true
-	defer backendLog.Flush()
 
 	for testCase, response := range responses {
 		defer resetCfg(cfg)()
@@ -963,20 +1006,16 @@ func TestOutboundPeerHandshake(t *testing.T) {
 		}
 		serv.Start()
 
-		go func() {
-			msg := <-report
-			if msg.Err != nil {
-				t.Errorf("error case %d: %s", testCase, msg)
-			}
-			serv.Stop()
-			testDone <- struct{}{}
-		}()
+		msg := <-report
+		if msg.Err != nil {
+			t.Errorf("error case %d: %s", testCase, msg)
+		}
+		serv.Stop()
 
 		serv.WaitForShutdown()
-		// Make sure the test is done before starting again.
-		<-testDone
 	}
 
+	cfg.ConnectPeers = []string{}
 	NewConn = peer.NewConnection
 }
 
@@ -1048,16 +1087,6 @@ func TestInboundPeerHandshake(t *testing.T) {
 		},
 	}
 
-	// Load config.
-	var err error
-	cfg, _, err = loadConfig(true)
-	if err != nil {
-		t.Fatalf("Config failed to load.")
-	}
-	cfg.MaxPeers = 1
-	cfg.DisableDNSSeed = true
-	defer backendLog.Flush()
-
 	for testCase, open := range openingMsg {
 		defer resetCfg(cfg)()
 		// Create server and start it.
@@ -1075,13 +1104,11 @@ func TestInboundPeerHandshake(t *testing.T) {
 		incoming <- NewMockConnection(localAddr, remoteAddr, report,
 			NewInboundHandshakePeerTester(open, addrAction))
 
-		go func(tCase int) {
-			msg := <-report
-			if msg.Err != nil {
-				t.Errorf("error case %d: %s", tCase, msg)
-			}
-			serv.Stop()
-		}(testCase)
+		msg := <-report
+		if msg.Err != nil {
+			t.Errorf("error case %d: %s", testCase, msg)
+		}
+		serv.Stop()
 
 		serv.WaitForShutdown()
 	}
@@ -1153,16 +1180,6 @@ func TestProcessAddr(t *testing.T) {
 		},
 	}
 
-	// Load config.
-	var err error
-	cfg, _, err = loadConfig(true)
-	if err != nil {
-		t.Fatalf("Config failed to load.")
-	}
-	cfg.MaxPeers = 1
-	cfg.DisableDNSSeed = true
-	defer backendLog.Flush()
-
 	for testCase, addrTest := range AddrTests {
 		defer resetCfg(cfg)()
 
@@ -1193,13 +1210,11 @@ func TestProcessAddr(t *testing.T) {
 
 		incoming <- mockConn
 
-		go func() {
-			msg := <-report
-			if msg.Err != nil {
-				t.Errorf("error case %d: %s", testCase, msg)
-			}
-			serv.Stop()
-		}()
+		msg := <-report
+		if msg.Err != nil {
+			t.Errorf("error case %d: %s", testCase, msg)
+		}
+		serv.Stop()
 
 		serv.WaitForShutdown()
 	}
@@ -1350,16 +1365,6 @@ func TestProcessInvAndObjectExchange(t *testing.T) {
 	localAddr := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 8333}
 	remoteAddr := &net.TCPAddr{IP: net.ParseIP("192.168.0.1"), Port: 8333}
 
-	// Load config.
-	var err error
-	cfg, _, err = loadConfig(true)
-	if err != nil {
-		t.Fatalf("Config failed to load.")
-	}
-	cfg.MaxPeers = 1
-	cfg.DisableDNSSeed = true
-	defer backendLog.Flush()
-
 	for testCase, test := range tests {
 		defer resetCfg(cfg)()
 
@@ -1384,13 +1389,11 @@ func TestProcessInvAndObjectExchange(t *testing.T) {
 		serv.handleAddPeerMsg(tstNewPeerHandshakeComplete(serv, mockConn, inventory, mockSend, na))
 
 		var msg TestReport
-		go func() {
-			msg = <-report
-			if msg.Err != nil {
-				t.Errorf("error case %d: %s", testCase, msg)
-			}
-			serv.Stop()
-		}()
+		msg = <-report
+		if msg.Err != nil {
+			t.Errorf("error case %d: %s", testCase, msg)
+		}
+		serv.Stop()
 
 		serv.WaitForShutdown()
 		// Check if the data sent is actually in the peer's database.

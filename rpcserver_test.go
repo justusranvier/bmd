@@ -234,12 +234,7 @@ func TestRPCConnection(t *testing.T) {
 	// needs at least one listener or it won't start so we mock it.
 	remoteAddr := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 8442}
 
-	// Generate config.
-	var err error
-	cfg, _, err = loadConfig(true)
-	if err != nil {
-		t.Fatal("failed to load config")
-	}
+	// Set config.
 	cfg.MaxPeers = 0
 	cfg.RPCPass = rpcAdminUser
 	cfg.RPCUser = rpcAdminPass
@@ -248,7 +243,6 @@ func TestRPCConnection(t *testing.T) {
 	cfg.DisableRPC = false
 	cfg.DisableTLS = true
 	cfg.RPCMaxClients = 1
-	cfg.DisableDNSSeed = true
 	defer resetCfg(cfg)()
 
 	// Load rpc listeners.
@@ -261,7 +255,6 @@ func TestRPCConnection(t *testing.T) {
 		addr = net.JoinHostPort(addr, strconv.Itoa(defaultRPCPort))
 		cfg.RPCListeners = append(cfg.RPCListeners, addr)
 	}
-	defer backendLog.Flush()
 
 	// Create a server.
 	listeners := []string{net.JoinHostPort("", "8445")}
@@ -287,6 +280,9 @@ func TestRPCConnection(t *testing.T) {
 	rpcTests(client, t)
 	client.Close() // we're done
 	ws.Close()
+
+	// Let server register disconnection
+	<-time.NewTimer(time.Millisecond * 20).C
 
 	// Test for authentication timeout.
 	ws, _, err = websocket.DefaultDialer.Dial(rpcLoc, nil)

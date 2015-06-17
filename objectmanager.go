@@ -90,6 +90,7 @@ type ObjectManager struct {
 	requested map[wire.InvVect]*peerRequest
 
 	relayInvChan chan *wire.InvVect
+	relayInvList *list.List
 	msgChan      chan interface{}
 	wg           sync.WaitGroup
 	quit         chan struct{}
@@ -193,7 +194,7 @@ func (om *ObjectManager) handleInsert(obj *wire.MsgObject) uint64 {
 	}
 
 	// Advertise objects to other peers.
-	om.relayInvChan <- invVect
+	om.relayInvList.PushBack(invVect)
 
 	return counter
 }
@@ -438,15 +439,34 @@ func (om *ObjectManager) clearRequests(d time.Duration) {
 	}()
 }
 
+// handleRelayInvMsg deals with relaying inventory to peers that are not already
+// known to have it. It is invoked from the peerHandler goroutine.
+func (om *ObjectManager) handleRelayInvMsg(inv []*wire.InvVect) {
+	for peer := range om.peers {
+		ivl := peer.inventory.FilterKnown(inv)
+
+		if len(ivl) == 0 {
+			return
+		}
+
+		// Queue the inventory to be relayed with the next batch.
+		// It will be ignored if the peer is already known to
+		// have the inventory.
+		peer.send.QueueInventory(ivl)
+	}
+}
+
 // objectHandler is the main handler for the object manager. It must be run as a
 // goroutine. It processes inv messages in a separate goroutine from the peer
 // handlers.
 func (om *ObjectManager) objectHandler() {
 	clearTick := time.NewTicker(cfg.RequestExpire / 2)
+	relayInvTick := time.NewTicker(10 * time.Second)
 
 	for {
 		select {
 		case <-om.quit:
+			relayInvTick.Stop()
 			clearTick.Stop()
 			om.wg.Done()
 			return
@@ -455,6 +475,23 @@ func (om *ObjectManager) objectHandler() {
 			// Under normal operation, we expire requests much more quickly
 			// than during the initial download.
 			om.clearRequests(cfg.RequestExpire)
+
+		// Relay to the other peers all the new invs collected
+		// during the past ten seconds.
+		case <-relayInvTick.C:
+			objmgrLog.Trace("Relay inv ticker ticked.")
+			if om.relayInvList.Len() == 0 {
+				continue
+			}
+			invs := make([]*wire.InvVect, om.relayInvList.Len())
+			i := 0
+			for e := om.relayInvList.Front(); e != nil; e = e.Next() {
+				invs[i] = e.Value.(*wire.InvVect)
+				i++
+			}
+			om.relayInvList = list.New()
+			objmgrLog.Trace("Relying list of invs of size ", len(invs))
+			om.handleRelayInvMsg(invs)
 
 		case m := <-om.msgChan:
 			switch msg := m.(type) {
@@ -474,40 +511,6 @@ func (om *ObjectManager) objectHandler() {
 			case *readyPeerMsg:
 				om.handleReadyPeer((*bmpeer)(msg))
 			}
-		}
-	}
-}
-
-// relayHandler collects new invs that are to be relayed to other peers and sends
-// them every ten seconds. Must be run in a go routine.
-func (om *ObjectManager) relayHandler() {
-	relayInvTick := time.NewTicker(10 * time.Second)
-	relayInvList := list.New()
-
-	for {
-		select {
-		case <-om.quit:
-			relayInvTick.Stop()
-			om.wg.Done()
-			return
-
-		case <-relayInvTick.C:
-			objmgrLog.Trace("Relay inv ticker ticked.")
-			if relayInvList.Len() == 0 {
-				continue
-			}
-			invs := make([]*wire.InvVect, relayInvList.Len())
-			i := 0
-			for e := relayInvList.Front(); e != nil; e = e.Next() {
-				invs[i] = e.Value.(*wire.InvVect)
-				i++
-			}
-			relayInvList = list.New()
-			objmgrLog.Trace("Relying list of invs of size ", len(invs))
-			om.server.handleRelayInvMsg(invs)
-
-		case inv := <-om.relayInvChan:
-			relayInvList.PushBack(inv)
 		}
 	}
 }
@@ -572,9 +575,8 @@ func (om *ObjectManager) Start() {
 
 	objmgrLog.Info("Object manager started.")
 
-	om.wg.Add(2)
+	om.wg.Add(1)
 	go om.objectHandler()
-	go om.relayHandler()
 }
 
 // Stop gracefully shuts down the object manager by stopping all asynchronous
@@ -598,11 +600,12 @@ func newObjectManager(s *server) *ObjectManager {
 		server:       s,
 		requested:    make(map[wire.InvVect]*peerRequest),
 		unknown:      make(map[wire.InvVect]struct{}),
-		msgChan:      make(chan interface{}, objectManagerQueueSize),
+		msgChan:      make(chan interface{}),
 		quit:         make(chan struct{}),
 		relayInvChan: make(chan *wire.InvVect, objectManagerQueueSize),
 		peers:        make(map[*bmpeer]struct{}),
 		working:      make(map[*bmpeer]struct{}),
+		relayInvList: list.New(),
 	}
 }
 

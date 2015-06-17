@@ -36,10 +36,11 @@ type Connection interface {
 // real outside bitmessage node over the internet.
 type connection struct {
 	conn          net.Conn
+	connMtx       sync.RWMutex
 	addr          net.Addr
-	sentMtx       sync.Mutex
+	sentMtx       sync.RWMutex
 	bytesSent     uint64
-	receivedMtx   sync.Mutex
+	receivedMtx   sync.RWMutex
 	bytesReceived uint64
 	lastRead      time.Time
 	lastWrite     time.Time
@@ -53,27 +54,29 @@ type connection struct {
 // WriteMessage sends a bitmessage p2p message along the tcp connection.
 func (pc *connection) WriteMessage(msg wire.Message) error {
 	// conn will be nill if the connection disconnected.
-	if pc.conn == nil {
+	if !pc.Connected() {
 		return errors.New("No connection established.")
 	}
 
 	// Write the message to the peer.
-	n, err := wire.WriteMessageN(pc.conn, msg, wire.MainNet)
+	pc.connMtx.RLock()
+	conn := pc.conn
+	pc.connMtx.RUnlock()
+	n, err := wire.WriteMessageN(conn, msg, wire.MainNet)
 
-	pc.receivedMtx.Lock()
+	pc.sentMtx.Lock()
 	pc.bytesSent += uint64(n)
 	pc.lastWrite = time.Now()
-	pc.receivedMtx.Unlock()
+	pc.maxUp.Transfer(float64(n))
+	pc.sentMtx.Unlock()
 
 	if err != nil {
-		if pc.conn == nil { //Connection might have been closed while reading.
+		if !pc.Connected() { // Connection might have been closed while reading.
 			return nil
 		}
 		pc.Close()
 		return err
 	}
-
-	pc.maxUp.Transfer(float64(n))
 
 	return nil
 }
@@ -81,26 +84,28 @@ func (pc *connection) WriteMessage(msg wire.Message) error {
 // ReadMessage reads a bitmessage p2p message from the tcp connection.
 func (pc *connection) ReadMessage() (wire.Message, error) {
 	// conn will be nill if the connection disconnected.
-	if pc.conn == nil {
+	if !pc.Connected() {
 		return nil, nil
 	}
 
-	n, msg, _, err := wire.ReadMessageN(pc.conn, wire.MainNet)
+	pc.connMtx.RLock()
+	conn := pc.conn
+	pc.connMtx.RUnlock()
+	n, msg, _, err := wire.ReadMessageN(conn, wire.MainNet)
 
 	pc.receivedMtx.Lock()
 	pc.bytesReceived += uint64(n)
 	pc.lastRead = time.Now()
+	pc.maxDown.Transfer(float64(n))
 	pc.receivedMtx.Unlock()
 
 	if err != nil {
-		if pc.conn == nil { // Connection might have been closed while reading.
+		if !pc.Connected() { // Connection might have been closed while reading.
 			return nil, nil
 		}
 		pc.Close()
 		return nil, err
 	}
-
-	pc.maxDown.Transfer(float64(n))
 
 	pc.idleTimer.Reset(pc.idleTimeout)
 
@@ -110,17 +115,15 @@ func (pc *connection) ReadMessage() (wire.Message, error) {
 // BytesWritten returns the total number of bytes written to this connection.
 func (pc *connection) BytesWritten() uint64 {
 	pc.sentMtx.Lock()
-	n := pc.bytesSent
-	pc.sentMtx.Unlock()
-	return n
+	defer pc.sentMtx.Unlock()
+	return pc.bytesSent
 }
 
 // BytesRead returns the total number of bytes read by this connection.
 func (pc *connection) BytesRead() uint64 {
 	pc.receivedMtx.Lock()
-	n := pc.bytesReceived
-	pc.receivedMtx.Unlock()
-	return n
+	defer pc.receivedMtx.Unlock()
+	return pc.bytesReceived
 }
 
 // LastWrite returns the last time that a message was written.
@@ -137,17 +140,16 @@ func (pc *connection) LastRead() time.Time {
 
 // RemoteAddr returns the address of the remote peer.
 func (pc *connection) RemoteAddr() net.Addr {
-	if pc.conn == nil {
-		return pc.addr
-	}
-	return pc.conn.RemoteAddr()
+	return pc.addr
 }
 
 // Close disconnects the peer and stops running the connection.
 func (pc *connection) Close() {
-	if pc.conn != nil {
+	if pc.Connected() {
+		pc.connMtx.Lock()
 		conn := pc.conn
 		pc.conn = nil
+		pc.connMtx.Unlock()
 		conn.Close()
 	}
 
@@ -156,6 +158,8 @@ func (pc *connection) Close() {
 
 // Connected returns whether the connection is connected to a remote peer.
 func (pc *connection) Connected() bool {
+	pc.connMtx.RLock()
+	defer pc.connMtx.RUnlock()
 	return pc.conn != nil
 }
 
@@ -175,7 +179,9 @@ func (pc *connection) Connect() error {
 	pc.idleTimer.Reset(pc.idleTimeout)
 
 	pc.timeConnected = time.Now()
+	pc.connMtx.Lock()
 	pc.conn = conn
+	pc.connMtx.Unlock()
 	return nil
 }
 
@@ -186,16 +192,18 @@ func SetDialer(dialer func(string, string) (net.Conn, error)) {
 
 // NewConnection creates a new *connection.
 func NewConnection(addr net.Addr, maxDown, maxUp int64) Connection {
+	idleTimeout := time.Minute * pingTimeoutMinutes
+
 	pc := &connection{
 		addr:        addr,
-		idleTimeout: time.Minute * pingTimeoutMinutes,
+		idleTimeout: idleTimeout,
 		maxDown:     maxrate.New(float64(maxDown), 1),
 		maxUp:       maxrate.New(float64(maxUp), 1),
 	}
 
 	pc.idleTimer = time.AfterFunc(pc.idleTimeout, func() {
 		pc.WriteMessage(&wire.MsgPong{})
-		pc.idleTimer.Reset(pc.idleTimeout)
+		pc.idleTimer.Reset(idleTimeout)
 	})
 
 	pc.idleTimer.Stop()
