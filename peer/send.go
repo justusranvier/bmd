@@ -21,9 +21,9 @@ import (
 )
 
 const (
-	// queueSize is the size of data and message queues. TODO arbitrarily set as
-	// 20.
-	queueSize = 20
+	// sendQueueSize is the size of data and message queues. The number should be
+	// small if possible, and ideally we would use an unbuffered channel eventually.
+	sendQueueSize = 5
 )
 
 // Send handles everything that is to be sent to the remote peer eventually.
@@ -309,8 +309,8 @@ func (send *send) PrependAddr(str string) string {
 func NewSend(inventory *Inventory, db database.Db) Send {
 	return &send{
 		trickleTime:   time.Second * 10,
-		msgQueue:      make(chan wire.Message, queueSize),
-		dataQueue:     make(chan wire.Message, queueSize),
+		msgQueue:      make(chan wire.Message, sendQueueSize),
+		dataQueue:     make(chan wire.Message, sendQueueSize),
 		outputInvChan: make(chan []*wire.InvVect, outputBufferSize),
 		requestQueue:  make(chan []*wire.InvVect, outputBufferSize),
 		quit:          make(chan struct{}),

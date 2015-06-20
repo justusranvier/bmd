@@ -97,8 +97,8 @@ func newPeerState(maxOutbound int) *peerState {
 		persistentPeers:  make(map[*bmpeer]struct{}),
 		outboundPeers:    make(map[*bmpeer]struct{}),
 		banned:           make(map[string]time.Time),
-		maxOutboundPeers: maxOutbound,
 		outboundGroups:   make(map[string]int),
+		maxOutboundPeers: maxOutbound,
 	}
 }
 
@@ -116,8 +116,8 @@ type server struct {
 	newPeers      chan *bmpeer
 	donePeers     chan *bmpeer
 	banPeers      chan *bmpeer
+	disconPeers   chan *bmpeer
 	wakeup        chan struct{}
-	query         chan interface{}
 	wg            sync.WaitGroup
 	quit          chan struct{}
 	db            database.Db
@@ -210,6 +210,7 @@ func (s *server) handleDonePeerMsg(p *bmpeer) {
 		peerLog.Info(p.peer.PrependAddr("Removed from server. "), len(list), " inbound peers remain.")
 	} else {
 		list = s.state.outboundPeers
+		s.state.outboundGroups[addrmgr.GroupKey(p.na)]--
 		peerLog.Info(p.peer.PrependAddr("Removed from server. "), len(list)-1, " outbound peers remain.")
 	}
 
@@ -274,56 +275,6 @@ func (s *server) AddNewPeer(addr string, stream uint32, permanent bool) error {
 	}
 
 	return nil
-}
-
-// handleQuery is the central handler for all queries and commands from other
-// goroutines related to the peer state.
-func (s *server) handleQuery(querymsg interface{}) {
-	switch msg := querymsg.(type) {
-	case getConnCountMsg:
-		nconnected := int32(0)
-		s.state.forAllPeers(func(p *bmpeer) {
-			// TODO
-			//if p.Connected() {
-			nconnected++
-			//}
-		})
-		msg.reply <- nconnected
-
-	case addNodeMsg:
-		msg.reply <- s.AddNewPeer(msg.addr, msg.stream, msg.permanent)
-
-	case delNodeMsg:
-		found := false
-		for p := range s.state.persistentPeers {
-			if p.addr.String() == msg.addr {
-				// Keep group counts ok since we remove from
-				// the list now.
-				s.state.outboundGroups[addrmgr.GroupKey(p.na)]--
-				// This is ok because we are not continuing
-				// to iterate so won't corrupt the loop.
-				delete(s.state.persistentPeers, p)
-				p.disconnect()
-				found = true
-				break
-			}
-		}
-
-		if found {
-			msg.reply <- nil
-		} else {
-			msg.reply <- errors.New("peer not found")
-		}
-
-	// Request a list of the persistent (added) peers.
-	case getAddedNodesMsg:
-		// Respond with a slice of the relavent peers.
-		peers := make([]*bmpeer, 0, len(s.state.persistentPeers))
-		for p := range s.state.persistentPeers {
-			peers = append(peers, p)
-		}
-		msg.reply <- peers
-	}
 }
 
 // listenHandler is the main listener which accepts incoming connections for the
@@ -445,12 +396,18 @@ func (s *server) peerHandler() {
 		case p := <-s.banPeers:
 			s.handleBanPeerMsg(p)
 
+		// Disconnect a peer. There is an inherent problem with disconnecting
+		// a peer because it might have to send messages to be read by the go
+		// routine that called the disconnect in the first place. Under some
+		// circumstances, even with a buffered channel, this can cause it to lock.
+		// It would be good if we came up with a way of disconnecting a peer
+		// that we could guarantee was safe but I think that's a larger project.
+		case p := <-s.disconPeers:
+			p.disconnect()
+
 		// Used by timers below to wake us back up.
 		case <-s.wakeup:
 			// left intentionally blank
-
-		case qmsg := <-s.query:
-			s.handleQuery(qmsg)
 		}
 
 		// Only try connect to more peers if we actually need more.
@@ -471,7 +428,8 @@ func (s *server) peerHandler() {
 				break
 			}
 
-			key := addrmgr.GroupKey(addr.NetAddress())
+			na := addr.NetAddress()
+			key := addrmgr.GroupKey(na)
 			// Address will not be invalid, local or unroutable
 			// because addrmanager rejects those on addition.
 			// Just check that we don't already have an address
@@ -526,44 +484,6 @@ func (s *server) peerHandler() {
 // BanPeer bans a peer that has already been connected to the server by ip.
 func (s *server) BanPeer(p *bmpeer) {
 	s.banPeers <- p
-}
-
-// ConnectedCount returns the number of currently connected peers.
-func (s *server) ConnectedCount() int32 {
-	replyChan := make(chan int32)
-
-	s.query <- getConnCountMsg{reply: replyChan}
-
-	return <-replyChan
-}
-
-// AddedNodeInfo returns an array of structures
-// describing the persistent (added) nodes.
-func (s *server) AddedNodeInfo() []*bmpeer {
-	replyChan := make(chan []*bmpeer)
-	s.query <- getAddedNodesMsg{reply: replyChan}
-	return <-replyChan
-}
-
-// AddAddr adds `addr' as a new outbound peer. If permanent is true then the
-// peer will be persistent and reconnect if the connection is lost.
-// It is an error to call this with an already existing peer.
-func (s *server) AddAddr(addr string, stream uint32, permanent bool) error {
-	replyChan := make(chan error)
-
-	s.query <- addNodeMsg{addr: addr, stream: stream, permanent: permanent, reply: replyChan}
-
-	return <-replyChan
-}
-
-// RemoveAddr removes `addr' from the list of persistent peers if present.
-// An error will be returned if the peer was not found.
-func (s *server) RemoveAddr(addr string) error {
-	replyChan := make(chan error)
-
-	s.query <- delNodeMsg{addr: addr, reply: replyChan}
-
-	return <-replyChan
 }
 
 // Start begins accepting connections from peers.
@@ -867,8 +787,8 @@ func newServer(listenAddrs []string, db database.Db,
 		newPeers:    make(chan *bmpeer, cfg.MaxPeers),
 		donePeers:   make(chan *bmpeer, cfg.MaxPeers),
 		banPeers:    make(chan *bmpeer, cfg.MaxPeers),
+		disconPeers: make(chan *bmpeer, cfg.MaxPeers),
 		wakeup:      make(chan struct{}),
-		query:       make(chan interface{}),
 		quit:        make(chan struct{}),
 		db:          db,
 		nat:         nat,

@@ -976,7 +976,11 @@ func TestOutboundPeerHandshake(t *testing.T) {
 			InteractionComplete: true,
 			DisconnectExpected:  true,
 		},
-		// TODO send more improperly timed messages here. GetData, inv, and object all need to be tested for disconnection.
+		&PeerAction{
+			Messages:            []wire.Message{testObj[0]},
+			InteractionComplete: true,
+			DisconnectExpected:  true,
+		},
 	}
 
 	localAddr := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 8333}
@@ -994,6 +998,7 @@ func TestOutboundPeerHandshake(t *testing.T) {
 
 	for testCase, response := range responses {
 		defer resetCfg(cfg)()
+
 		NewConn = handshakePeerBuilder(response)
 
 		// Create server and start it.
@@ -1089,6 +1094,7 @@ func TestInboundPeerHandshake(t *testing.T) {
 
 	for testCase, open := range openingMsg {
 		defer resetCfg(cfg)()
+
 		// Create server and start it.
 		listeners := []string{net.JoinHostPort("", "8445")}
 		var err error

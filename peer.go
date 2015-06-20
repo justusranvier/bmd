@@ -58,6 +58,7 @@ type bmpeer struct {
 	inbound           bool
 	lastReceipt       time.Time
 	invReceived       bool
+	signalReady       int
 	knownAddresses    map[string]struct{}
 	StatsMtx          sync.RWMutex // protects all statistics below here.
 	versionKnown      bool
@@ -169,13 +170,6 @@ func (p *bmpeer) PushVerAckMsg() {
 	peerLog.Debug(p.peer.PrependAddr("Ver ack message sent."))
 }
 
-func max(x, y int) int {
-	if x > y {
-		return x
-	}
-	return y
-}
-
 // PushGetDataMsg creates a GetData message and sends it to the remote peer.
 func (p *bmpeer) PushGetDataMsg(ivl []*wire.InvVect) {
 	if len(ivl) == 0 {
@@ -183,7 +177,14 @@ func (p *bmpeer) PushGetDataMsg(ivl []*wire.InvVect) {
 	}
 
 	p.inventory.AddRequest(len(ivl))
-	peerLog.Debug(p.peer.PrependAddr(fmt.Sprint(len(ivl), " requests assigned for a total of ", p.inventory.NumRequests(), ".")))
+	if p.inventory.NumRequests() > maxPeerRequests/2 {
+		p.signalReady = p.inventory.NumRequests() / 2
+	} else {
+		p.signalReady = 0
+	}
+	peerLog.Debug(p.peer.PrependAddr(fmt.Sprint(len(ivl),
+		" requests assigned for a total of ", p.inventory.NumRequests(),
+		"; signal ready at ", p.signalReady)))
 
 	x := 0
 	for len(ivl)-x > wire.MaxInvPerMsg {
@@ -196,15 +197,6 @@ func (p *bmpeer) PushGetDataMsg(ivl []*wire.InvVect) {
 		p.QueueMessage(&wire.MsgGetData{InvList: ivl[x:]})
 		peerLog.Debug(p.peer.PrependAddr(fmt.Sprint("Get data message sent with ", len(ivl)-x, " hashes.")))
 	}
-
-	// TODO the peer should signal the object manager when it is ready to download more.
-	// This can be done once the object manager downloads more intelligently.
-	/*if p.inventory.NumRequests() > cfg.MaxPeerRequests/2 {
-		p.signalReady = p.inventory.NumRequests() / 2
-	} else {
-		p.signalReady = 0
-		p.server.objectManager.ReadyPeer(p)
-	}*/
 }
 
 // PushInvMsg creates and sends an Inv message and sends it to the remote peer.
@@ -431,10 +423,10 @@ func (p *bmpeer) HandleObjectMsg(msg *wire.MsgObject) error {
 
 	p.server.objectManager.QueueObject(msg, p)
 
-	// TODO signal object manager that we are ready to download more.
-	/*if p.signalReady == p.inventory.NumRequests() {
+	// signal object manager that we are ready to download more.
+	if p.signalReady == p.inventory.NumRequests() || p.inventory.NumRequests() == 0 {
 		p.server.objectManager.ReadyPeer(p)
-	}*/
+	}
 	p.server.addrManager.Connected(p.na)
 
 	return nil
