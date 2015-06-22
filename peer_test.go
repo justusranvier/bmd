@@ -36,6 +36,13 @@ func randomShaHash() *wire.ShaHash {
 	return hash
 }
 
+// toMsgObject is used to return a *wire.MsgObject when it is certain that the
+// input message is encodable as such.
+func toMsgObject(msg wire.Message) *wire.MsgObject {
+	obj, _ := wire.ToMsgObject(msg)
+	return obj
+}
+
 // resetCfg is called to refresh configuration before every test. The returned
 // function is supposed to be called at the end of the test; to clear temp
 // directories.
@@ -46,8 +53,6 @@ func resetCfg(cfg *config) func() {
 	}
 	cfg.DataDir = dir
 	cfg.LogDir = filepath.Join(cfg.DataDir, defaultLogDirname)
-	cfg.RPCKey = filepath.Join(cfg.DataDir, "rpc.key")
-	cfg.RPCCert = filepath.Join(cfg.DataDir, "rpc.cert")
 
 	return func() {
 		os.RemoveAll(dir)
@@ -861,39 +866,39 @@ var ripehash = []wire.RipeHash{
 }
 
 // Some bitmessage objects that we use for testing. Two of each.
-var testObj = []*wire.MsgObject{
-	wire.NewMsgGetPubKey(654, expires, 4, 1, &ripehash[0], &shahash[0]).ToMsgObject(),
-	wire.NewMsgGetPubKey(654, expires, 4, 1, &ripehash[1], &shahash[1]).ToMsgObject(),
+var testObj = []wire.Message{
+	wire.NewMsgGetPubKey(654, expires, 4, 1, &ripehash[0], &shahash[0]),
+	wire.NewMsgGetPubKey(654, expires, 4, 1, &ripehash[1], &shahash[1]),
 	wire.NewMsgPubKey(543, expires, 4, 1, 2, &pubkey[0], &pubkey[1], 3, 5,
-		[]byte{4, 5, 6, 7, 8, 9, 10}, &shahash[0], []byte{11, 12, 13, 14, 15, 16, 17, 18}).ToMsgObject(),
+		[]byte{4, 5, 6, 7, 8, 9, 10}, &shahash[0], []byte{11, 12, 13, 14, 15, 16, 17, 18}),
 	wire.NewMsgPubKey(543, expires, 4, 1, 2, &pubkey[2], &pubkey[3], 3, 5,
-		[]byte{4, 5, 6, 7, 8, 9, 10}, &shahash[1], []byte{11, 12, 13, 14, 15, 16, 17, 18}).ToMsgObject(),
+		[]byte{4, 5, 6, 7, 8, 9, 10}, &shahash[1], []byte{11, 12, 13, 14, 15, 16, 17, 18}),
 	wire.NewMsgMsg(765, expires, 1, 1,
 		[]byte{90, 87, 66, 45, 3, 2, 120, 101, 78, 78, 78, 7, 85, 55, 2, 23},
 		1, 1, 2, &pubkey[0], &pubkey[1], 3, 5, &ripehash[0], 1,
 		[]byte{21, 22, 23, 24, 25, 26, 27, 28},
 		[]byte{20, 21, 22, 23, 24, 25, 26, 27},
-		[]byte{19, 20, 21, 22, 23, 24, 25, 26}).ToMsgObject(),
+		[]byte{19, 20, 21, 22, 23, 24, 25, 26}),
 	wire.NewMsgMsg(765, expires, 1, 1,
 		[]byte{90, 87, 66, 45, 3, 2, 120, 101, 78, 78, 78, 7, 85, 55},
 		1, 1, 2, &pubkey[2], &pubkey[3], 3, 5, &ripehash[1], 1,
 		[]byte{21, 22, 23, 24, 25, 26, 27, 28, 79},
 		[]byte{20, 21, 22, 23, 24, 25, 26, 27, 79},
-		[]byte{19, 20, 21, 22, 23, 24, 25, 26, 79}).ToMsgObject(),
+		[]byte{19, 20, 21, 22, 23, 24, 25, 26, 79}),
 	wire.NewMsgBroadcast(876, expires, 1, 1, &shahash[0],
 		[]byte{90, 87, 66, 45, 3, 2, 120, 101, 78, 78, 78, 7, 85, 55, 2, 23},
-		1, 1, 2, &pubkey[0], &pubkey[1], 3, 5, &ripehash[1], 1,
+		1, 1, 2, &pubkey[0], &pubkey[1], 3, 5, 1,
 		[]byte{27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41},
-		[]byte{42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56}).ToMsgObject(),
+		[]byte{42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56}),
 	wire.NewMsgBroadcast(876, expires, 1, 1, &shahash[1],
 		[]byte{90, 87, 66, 45, 3, 2, 120, 101, 78, 78, 78, 7, 85, 55},
-		1, 1, 2, &pubkey[2], &pubkey[3], 3, 5, &ripehash[0], 1,
+		1, 1, 2, &pubkey[2], &pubkey[3], 3, 5, 1,
 		[]byte{27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40},
-		[]byte{42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55}).ToMsgObject(),
-	wire.NewMsgUnknownObject(345, expires, wire.ObjectType(4), 1, 1, []byte{77, 82, 53, 48, 96, 1}).ToMsgObject(),
-	wire.NewMsgUnknownObject(987, expires, wire.ObjectType(4), 1, 1, []byte{1, 2, 3, 4, 5, 0, 6, 7, 8, 9, 100}).ToMsgObject(),
-	wire.NewMsgUnknownObject(7288, expires, wire.ObjectType(5), 1, 1, []byte{0, 0, 0, 0, 1, 0, 0}).ToMsgObject(),
-	wire.NewMsgUnknownObject(7288, expires, wire.ObjectType(5), 1, 1, []byte{0, 0, 0, 0, 0, 0, 0, 99, 98, 97}).ToMsgObject(),
+		[]byte{42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55}),
+	wire.NewMsgUnknownObject(345, expires, wire.ObjectType(4), 1, 1, []byte{77, 82, 53, 48, 96, 1}),
+	wire.NewMsgUnknownObject(987, expires, wire.ObjectType(4), 1, 1, []byte{1, 2, 3, 4, 5, 0, 6, 7, 8, 9, 100}),
+	wire.NewMsgUnknownObject(7288, expires, wire.ObjectType(5), 1, 1, []byte{0, 0, 0, 0, 1, 0, 0}),
+	wire.NewMsgUnknownObject(7288, expires, wire.ObjectType(5), 1, 1, []byte{0, 0, 0, 0, 0, 0, 0, 99, 98, 97}),
 }
 
 func init() {
@@ -1329,27 +1334,27 @@ func TestProcessInvAndObjectExchange(t *testing.T) {
 		},
 		{ // Only the real peer should request data.
 			[]*wire.MsgObject{},
-			[]*wire.MsgObject{testObj[0], testObj[2], testObj[4], testObj[6], testObj[8]},
+			[]*wire.MsgObject{toMsgObject(testObj[0]), toMsgObject(testObj[2]), toMsgObject(testObj[4]), toMsgObject(testObj[6]), toMsgObject(testObj[8])},
 			nil,
 		},
 		{ // Neither peer should request data.
-			[]*wire.MsgObject{testObj[0], testObj[2], testObj[4], testObj[6], testObj[8]},
-			[]*wire.MsgObject{testObj[0], testObj[2], testObj[4], testObj[6], testObj[8]},
+			[]*wire.MsgObject{toMsgObject(testObj[0]), toMsgObject(testObj[2]), toMsgObject(testObj[4]), toMsgObject(testObj[6]), toMsgObject(testObj[8])},
+			[]*wire.MsgObject{toMsgObject(testObj[0]), toMsgObject(testObj[2]), toMsgObject(testObj[4]), toMsgObject(testObj[6]), toMsgObject(testObj[8])},
 			nil,
 		},
 		{ // Only the mock peer should request data.
-			[]*wire.MsgObject{testObj[0], testObj[2], testObj[4], testObj[6], testObj[8]},
+			[]*wire.MsgObject{toMsgObject(testObj[0]), toMsgObject(testObj[2]), toMsgObject(testObj[4]), toMsgObject(testObj[6]), toMsgObject(testObj[8])},
 			[]*wire.MsgObject{},
 			nil,
 		},
 		{ // The peers have no data in common, so they should both ask for everything of the other.
-			[]*wire.MsgObject{testObj[1], testObj[3], testObj[5], testObj[7], testObj[9]},
-			[]*wire.MsgObject{testObj[0], testObj[2], testObj[4], testObj[6], testObj[8]},
+			[]*wire.MsgObject{toMsgObject(testObj[1]), toMsgObject(testObj[3]), toMsgObject(testObj[5]), toMsgObject(testObj[7]), toMsgObject(testObj[9])},
+			[]*wire.MsgObject{toMsgObject(testObj[0]), toMsgObject(testObj[2]), toMsgObject(testObj[4]), toMsgObject(testObj[6]), toMsgObject(testObj[8])},
 			nil,
 		},
 		{ // The peers have some data in common.
-			[]*wire.MsgObject{testObj[0], testObj[3], testObj[5], testObj[7], testObj[9]},
-			[]*wire.MsgObject{testObj[0], testObj[2], testObj[4], testObj[6], testObj[8]},
+			[]*wire.MsgObject{toMsgObject(testObj[0]), toMsgObject(testObj[3]), toMsgObject(testObj[5]), toMsgObject(testObj[7]), toMsgObject(testObj[9])},
+			[]*wire.MsgObject{toMsgObject(testObj[0]), toMsgObject(testObj[2]), toMsgObject(testObj[4]), toMsgObject(testObj[6]), toMsgObject(testObj[8])},
 			nil,
 		},
 		{
