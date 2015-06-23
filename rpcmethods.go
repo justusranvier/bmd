@@ -10,8 +10,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/cenkalti/rpc2"
@@ -212,12 +210,10 @@ func (s *rpcServer) handleSubscribe(client *rpc2.Client, objType wire.ObjectType
 	state := rpcConstructState(client)
 
 	s.evtMgr.On(evt, func(out *RPCReceiveArgs) {
-		err := client.Call(clientHandler, out, nil)
-		if err != nil {
-			rpcLog.Infof("failed to call %s on client %s: %v", clientHandler,
-				state.remoteAddr, err)
-			client.Close()
-		}
+		s.mutex.RLock()
+		defer s.mutex.RUnlock()
+
+		s.clients[client].NotifyObject(out, objType)
 	}, state.eventsID)
 
 	// We subscribe to event before sending old objects because otherwise there
@@ -235,45 +231,18 @@ func (s *rpcServer) sendOldObjects(client *rpc2.Client, objType wire.ObjectType,
 		rpcLog.Errorf("FetchObjectsFromCounter, database error: %v", err)
 		return errors.New("database error")
 	}
-	state := rpcConstructState(client)
 
-	wg := sync.WaitGroup{}
-	var callError uint64
+	s.mutex.RLock()
+	c := s.clients[client]
+	s.mutex.RUnlock()
 
+	// Send objects to client. Terminate all requests if one fails.
 	for counter, msg := range objs {
 		out := &RPCReceiveArgs{
 			Object:  base64.StdEncoding.EncodeToString(wire.EncodeMessage(msg)),
 			Counter: counter,
 		}
-		// Send objects to client. Terminate all requests if one fails.
-		go func() {
-			wg.Add(1)
-			call := client.Go(clientHandler, out, nil, nil)
-		out:
-			for {
-				select {
-				case <-call.Done:
-					if call.Error != nil {
-						rpcLog.Infof("failed to call %s on client %s: %v",
-							clientHandler, state.remoteAddr, err)
-						// Can't use channels because of possible race
-						// conditions while trying to close them.
-						atomic.StoreUint64(&callError, 1)
-					}
-					break out
-				default:
-					if atomic.LoadUint64(&callError) == 1 {
-						break out
-					}
-				}
-			}
-			wg.Done()
-		}()
-	}
-
-	wg.Wait()           // wait for all requests to finish
-	if callError == 1 { // there was an error
-		client.Close()
+		c.NotifyObject(out, objType)
 	}
 
 	// We might have more objects to send.

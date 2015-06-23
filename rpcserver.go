@@ -8,6 +8,7 @@
 package main
 
 import (
+	"container/heap"
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/base64"
@@ -39,6 +40,11 @@ const (
 	// will fetch per query to the database. This is used when a client requests
 	// subscription to an object type from a specified counter value.
 	rpcCounterObjectsSize = 100
+
+	// rpcObjectDelay waits the specified amount of time between sending objects
+	// to the client. It's used to ensure that rpcClient has a chance to be
+	// notified of new objects.
+	rpcObjectDelay = time.Millisecond * 2
 )
 
 const (
@@ -116,6 +122,143 @@ func rpcConstructState(client *rpc2.Client) *rpcClientState {
 	return state
 }
 
+// objectHeap is used for arranging objects in the order of increasing counter
+// numbers. All its methods implement heap.Interface.
+type objectHeap []*RPCReceiveArgs
+
+func (h objectHeap) Len() int           { return len(h) }
+func (h objectHeap) Less(i, j int) bool { return h[i].Counter < h[j].Counter }
+func (h objectHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+
+func (h *objectHeap) Push(x interface{}) {
+	// Push and Pop use pointer receivers because they modify the slice's length,
+	// not just its contents.
+	*h = append(*h, x.(*RPCReceiveArgs))
+}
+
+func (h *objectHeap) Pop() interface{} {
+	old := *h
+	n := len(old)
+	x := old[n-1]
+	*h = old[0 : n-1]
+	return x
+}
+
+// rpcClient holds anything that requires an interaction of server and client
+// like channels for sending subscription messages
+type rpcClient struct {
+	client          *rpc2.Client
+	msgQueue        *objectHeap
+	broadcastQueue  *objectHeap
+	getpubkeyQueue  *objectHeap
+	pubkeyQueue     *objectHeap
+	unknownObjQueue *objectHeap
+	sync.Mutex      // for all the queues
+	state           *rpcClientState
+	quit            chan int
+}
+
+// newRPCClient creates a new rpcClient struct and does all necessary
+// initializations.
+func newRPCClient(client *rpc2.Client) *rpcClient {
+	c := &rpcClient{
+		client:          client,
+		msgQueue:        &objectHeap{},
+		broadcastQueue:  &objectHeap{},
+		getpubkeyQueue:  &objectHeap{},
+		pubkeyQueue:     &objectHeap{},
+		unknownObjQueue: &objectHeap{},
+		state:           rpcConstructState(client),
+		quit:            make(chan int),
+	}
+
+	heap.Init(c.msgQueue)
+	heap.Init(c.broadcastQueue)
+	heap.Init(c.getpubkeyQueue)
+	heap.Init(c.pubkeyQueue)
+	heap.Init(c.unknownObjQueue)
+
+	return c
+}
+
+// Disconnect terminates the running goroutine and waits for it to end.
+func (c *rpcClient) Disconnect() {
+	close(c.quit)
+}
+
+// Start initializes the goroutine responsible for sending any subscribed
+// object messages to the client in the right order.
+func (c *rpcClient) Start() {
+	go c.runner()
+}
+
+func (c *rpcClient) runner() {
+	sleepTimer := time.NewTimer(rpcObjectDelay)
+
+	// Process the heap.
+	for {
+		select {
+		case <-c.quit:
+			return
+
+		default:
+			c.Lock()
+			if c.msgQueue.Len() != 0 {
+				go c.sendObj(rpcClientHandleMessage,
+					c.msgQueue.Pop().(*RPCReceiveArgs))
+			}
+			if c.broadcastQueue.Len() != 0 {
+				go c.sendObj(rpcClientHandleBroadcast,
+					c.broadcastQueue.Pop().(*RPCReceiveArgs))
+			}
+			if c.getpubkeyQueue.Len() != 0 {
+				go c.sendObj(rpcClientHandleGetpubkey,
+					c.getpubkeyQueue.Pop().(*RPCReceiveArgs))
+			}
+			if c.pubkeyQueue.Len() != 0 {
+				go c.sendObj(rpcClientHandlePubkey,
+					c.pubkeyQueue.Pop().(*RPCReceiveArgs))
+			}
+			c.Unlock()
+
+			// sleep
+			sleepTimer.Reset(rpcObjectDelay)
+			<-sleepTimer.C
+		}
+	}
+}
+
+// sendObj is a helper method to send an object to the client.
+func (c *rpcClient) sendObj(clientHandler string, args *RPCReceiveArgs) {
+	err := c.client.Call(clientHandler, args, nil)
+	if err != nil {
+		rpcLog.Infof("failed to call %s on client %s: %v", clientHandler,
+			c.state.remoteAddr, err)
+
+		// If any call fails, end all subsequent communication.
+		c.client.Close()
+	}
+}
+
+// NotifyObject is used to notify this client of a new object.
+func (c *rpcClient) NotifyObject(args *RPCReceiveArgs, objType wire.ObjectType) {
+	c.Lock()
+	defer c.Unlock()
+
+	switch objType {
+	case wire.ObjectTypeMsg:
+		c.msgQueue.Push(args)
+	case wire.ObjectTypeBroadcast:
+		c.broadcastQueue.Push(args)
+	case wire.ObjectTypeGetPubKey:
+		c.getpubkeyQueue.Push(args)
+	case wire.ObjectTypePubKey:
+		c.pubkeyQueue.Push(args)
+	default:
+		c.unknownObjQueue.Push(args)
+	}
+}
+
 // rpcServer holds the items the rpc server may need to access (config,
 // shutdown, main server, etc.)
 type rpcServer struct {
@@ -126,7 +269,7 @@ type rpcServer struct {
 	limitauthsha [sha256.Size]byte
 	authsha      [sha256.Size]byte
 	mutex        sync.RWMutex
-	clients      map[*rpc2.Client]struct{}
+	clients      map[*rpc2.Client]*rpcClient
 	started      int32
 	shutdown     int32
 	wg           sync.WaitGroup
@@ -163,13 +306,13 @@ func (s *rpcServer) addHandlers() {
 // onClientConnect is run for each client that connects to the RPC server.
 func (s *rpcServer) onClientConnect(client *rpc2.Client) {
 	s.mutex.Lock()
-	s.clients[client] = struct{}{}
+	s.clients[client] = newRPCClient(client)
+	s.clients[client].Start()
 	s.mutex.Unlock()
 
 	// Enforce no authentication timeout.
 	go func() {
-		timer := time.NewTimer(time.Second * rpcAuthTimeoutSeconds)
-		<-timer.C
+		<-time.NewTimer(time.Second * rpcAuthTimeoutSeconds).C
 
 		if isAuth, _ := client.State.Get(rpcStateIsAuthenticated); !isAuth.(bool) {
 			client.Close() // bad client
@@ -183,10 +326,11 @@ func (s *rpcServer) onClientConnect(client *rpc2.Client) {
 // onClientDisconnect is run for each client that disconnects from the RPC server.
 func (s *rpcServer) onClientDisconnect(client *rpc2.Client) {
 	s.mutex.Lock()
+	state := s.clients[client].state
+	rpcLog.Infof("Disconnecting client %s", state.remoteAddr)
+	s.clients[client].Disconnect()
 	delete(s.clients, client)
 	s.mutex.Unlock()
-
-	state := rpcConstructState(client)
 
 	// De-register all event handlers.
 	id := state.eventsID
@@ -291,7 +435,7 @@ func newRPCServer(listenAddrs []string, s *server) (*rpcServer, error) {
 		rpcSrv:  rpc2.NewServer(),   // Create the underlying RPC server.
 		evtMgr:  eventemitter.New(), // Event manager.
 		quit:    make(chan int),
-		clients: make(map[*rpc2.Client]struct{}),
+		clients: make(map[*rpc2.Client]*rpcClient),
 	}
 
 	if cfg.RPCUser != "" && cfg.RPCPass != "" {
@@ -336,6 +480,7 @@ func newRPCServer(listenAddrs []string, s *server) (*rpcServer, error) {
 	}
 	listeners := make([]net.Listener, 0,
 		len(ipv6ListenAddrs)+len(ipv4ListenAddrs))
+
 	for _, addr := range ipv4ListenAddrs {
 		listener, err := listenFunc("tcp4", addr)
 		if err != nil {

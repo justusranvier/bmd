@@ -500,8 +500,8 @@ func TestRetrieveObject(t *testing.T) {
 	notThere := &wire.InvVect{Hash: *randomShaHash()}
 
 	// A valid object that will be in the database.
-	goodData := wire.NewMsgUnknownObject(345, time.Now(),
-		wire.ObjectType(4), 1, 1, []byte{77, 82, 53, 48, 96, 1}).ToMsgObject()
+	goodData := wire.NewMsgObject(345, time.Now(),
+		wire.ObjectType(4), 1, 1, []byte{77, 82, 53, 48, 96, 1})
 	goodInv := &wire.InvVect{Hash: *goodData.InventoryHash()}
 	db.InsertObject(goodData)
 

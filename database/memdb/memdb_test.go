@@ -8,7 +8,6 @@
 package memdb_test
 
 import (
-	"bytes"
 	"testing"
 
 	"github.com/monetas/bmd/database"
@@ -25,7 +24,6 @@ func TestClosed(t *testing.T) {
 	}
 
 	db.Close()
-	hash, _ := wire.NewShaHash(bytes.Repeat([]byte{0}, 32))
 
 	if err := db.Sync(); err != database.ErrDbClosed {
 		t.Errorf("Sync: unexpected error %v", err)
@@ -43,19 +41,19 @@ func TestClosed(t *testing.T) {
 		t.Errorf("InsertObject: unexpected error %v", err)
 	}
 
-	if _, err = db.ExistsObject(hash); err != database.ErrDbClosed {
+	if _, err = db.ExistsObject(nil); err != database.ErrDbClosed {
 		t.Errorf("ExistsObject: unexpected error %v", err)
 	}
 
-	if err := db.RemoveObject(hash); err != database.ErrDbClosed {
+	if err := db.RemoveObject(nil); err != database.ErrDbClosed {
 		t.Errorf("RemoveObject: unexpected error %v", err)
 	}
 
-	if _, err := db.FetchObjectByHash(hash); err != database.ErrDbClosed {
+	if _, err := db.FetchObjectByHash(nil); err != database.ErrDbClosed {
 		t.Errorf("FetchObjectByHash: unexpected error %v", err)
 	}
 
-	if err := db.RemoveExpiredObjects(); err != database.ErrDbClosed {
+	if _, err := db.RemoveExpiredObjects(); err != database.ErrDbClosed {
 		t.Errorf("RemoveExpiredObjects: unexpected error %v", err)
 	}
 
@@ -78,8 +76,12 @@ func TestClosed(t *testing.T) {
 		t.Errorf("RemoveObjectByCounter: unexpected error %v", err)
 	}
 
-	if err := db.RemovePubKey(hash); err != database.ErrDbClosed {
-		t.Errorf("RemovePubKey: unexpected error %v", err)
+	if err := db.RemoveEncryptedPubKey(nil); err != database.ErrDbClosed {
+		t.Errorf("RemoveEncryptedPubKey: unexpected error %v", err)
+	}
+
+	if err := db.RemovePublicIdentity(nil); err != database.ErrDbClosed {
+		t.Errorf("RemovePublicIdentity: unexpected error %v", err)
 	}
 
 	if _, err := db.FetchIdentityByAddress(nil); err != database.ErrDbClosed {

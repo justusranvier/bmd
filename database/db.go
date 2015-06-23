@@ -103,12 +103,18 @@ type Db interface {
 	// RemoveExpiredObjects prunes all objects in the main circulation store
 	// whose expiry time has passed (along with a margin of 3 hours). This does
 	// not touch the pubkeys stored in the public key collection.
-	RemoveExpiredObjects() error
+	RemoveExpiredObjects() ([]*wire.ShaHash, error)
 
-	// RemovePubKey removes a PubKey from the PubKey store with the specified
-	// tag. Note that it doesn't touch the general object store and won't remove
-	// the public key from there.
-	RemovePubKey(*wire.ShaHash) error
+	// RemoveEncryptedPubKey removes a v4 PubKey with the specified tag from the
+	// encrypted PubKey store. Note that it doesn't touch the general object
+	// store and won't remove the public key from there.
+	RemoveEncryptedPubKey(*wire.ShaHash) error
+
+	// RemovePublicIdentity removes the public identity corresponding the given
+	// address from the database. This includes any v2/v3/previously used v4
+	// identities. Note that it doesn't touch the general object store and won't
+	// remove the public key object from there.
+	RemovePublicIdentity(*bmutil.Address) error
 
 	// RollbackClose discards the recent database changes to the previously
 	// saved data at last Sync and closes the database.

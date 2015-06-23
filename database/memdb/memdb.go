@@ -15,9 +15,14 @@ import (
 
 	"github.com/monetas/bmd/database"
 	"github.com/monetas/bmutil"
+	"github.com/monetas/bmutil/cipher"
 	"github.com/monetas/bmutil/identity"
 	"github.com/monetas/bmutil/wire"
 )
+
+// expiredSliceSize is the initialized length of the slice that holds hashes of
+// expired objects returned by RemoveExpiredObjects.
+const expiredSliceSize = 50
 
 // counters type serves to enable sorting of uint64 slices using sort.Sort
 // function. Implements sort.Interface.
@@ -59,9 +64,14 @@ type MemDb struct {
 	// objectsByHash keeps track of unexpired objects by their inventory hash.
 	objectsByHash map[wire.ShaHash]*wire.MsgObject
 
-	// pubkeyByTag keeps track of all public keys (even expired) by their
-	// tag (which can be calculated from the address).
-	pubKeyByTag map[wire.ShaHash]*wire.MsgPubKey
+	// encryptedPubkeyByTag keeps track of all encrypted public keys (even
+	// expired) by their tag (which is embedded in the message). When pubkeys
+	// are decrypted, they are removed from here and put in pubIDByAddress.
+	encryptedPubKeyByTag map[wire.ShaHash]*wire.MsgPubKey
+
+	// pubIDByAddress keeps track of all v2/v3 and previously decrypted v4
+	// public keys converted into Public identity structs.
+	pubIDByAddress map[string]*identity.Public
 
 	// counters for respective object types.
 	msgCounter       *counter
@@ -108,7 +118,8 @@ func (db *MemDb) Close() error {
 	}
 
 	db.objectsByHash = nil
-	db.pubKeyByTag = nil
+	db.encryptedPubKeyByTag = nil
+	db.pubIDByAddress = nil
 	db.msgCounter = nil
 	db.broadcastCounter = nil
 	db.pubKeyCounter = nil
@@ -252,25 +263,50 @@ func (db *MemDb) FetchIdentityByAddress(addr *bmutil.Address) (*identity.Public,
 		return nil, database.ErrDbClosed
 	}
 
-	for _, msg := range db.pubKeyByTag {
-		switch msg.Version {
-		case wire.SimplePubKeyVersion:
-			fallthrough
-		case wire.ExtendedPubKeyVersion:
-			id, err := identity.FromPubKeyMsg(msg)
-			if err != nil { // invalid encryption/signing keys
+	addrStr, err := addr.Encode()
+	if err != nil {
+		return nil, err
+	}
+
+	// Check if we already have the public keys.
+	id, ok := db.pubIDByAddress[addrStr]
+	if ok {
+		return id, nil
+	}
+	if !ok && (addr.Version == wire.SimplePubKeyVersion ||
+		addr.Version == wire.ExtendedPubKeyVersion) {
+		// There's no way that we can have these unencrypted keys since they are
+		// always added to db.pubIDByAddress.
+		return nil, database.ErrNonexistentObject
+	}
+
+	// We don't support any other version.
+	if addr.Version != wire.EncryptedPubKeyVersion {
+		return nil, database.ErrNotImplemented
+	}
+
+	// Try finding the public key with the required tag and then decrypting it.
+	addrTag := addr.Tag()
+	for tag, msg := range db.encryptedPubKeyByTag {
+		if bytes.Equal(msg.Tag[:], addrTag) { // decrypt this key
+			err := cipher.TryDecryptAndVerifyPubKey(msg, addr)
+			if err != nil {
 				return nil, err
 			}
-			if bytes.Equal(id.Address.Tag(), addr.Tag()) { // we have our match
-				return id, nil
-			}
-		case wire.EncryptedPubKeyVersion:
-			if bytes.Equal(msg.Tag.Bytes(), addr.Tag()) { // decrypt this key
-				// TODO
-				return nil, database.ErrNotImplemented
-			}
-		default:
-			continue // unknown pubkey version
+
+			// Successful decryption and signature verification.
+			signKey, _ := msg.SigningKey.ToBtcec()
+			encKey, _ := msg.EncryptionKey.ToBtcec()
+
+			// Add public key to database.
+			id = identity.NewPublic(signKey, encKey,
+				msg.NonceTrials, msg.ExtraBytes, msg.Version, msg.StreamNumber)
+			db.pubIDByAddress[addrStr] = id
+
+			// Delete from map of encrypted pubkeys.
+			delete(db.encryptedPubKeyByTag, tag)
+
+			return id, nil
 		}
 	}
 
@@ -370,34 +406,58 @@ func (db *MemDb) InsertObject(obj *wire.MsgObject) (uint64, error) {
 	}
 
 	hash := obj.InventoryHash()
+	if _, ok := db.objectsByHash[*hash]; ok {
+		return 0, database.ErrDuplicateObject
+	}
 
 	// handle pubkeys
 	if obj.ObjectType == wire.ObjectTypePubKey {
 		pubkeyMsg := new(wire.MsgPubKey)
-		err := pubkeyMsg.Decode(bytes.NewReader(wire.EncodeMessage(pubkeyMsg)))
+		err := pubkeyMsg.Decode(bytes.NewReader(wire.EncodeMessage(obj)))
 		if err != nil {
 			goto doneInsert // fail silently
 		}
-
-		var tag []byte
 
 		switch pubkeyMsg.Version {
 		case wire.SimplePubKeyVersion:
 			fallthrough
 		case wire.ExtendedPubKeyVersion:
-			id, err := identity.FromPubKeyMsg(pubkeyMsg)
-			if err != nil { // invalid encryption/signing keys
+			// Check signing key.
+			signKey, err := pubkeyMsg.SigningKey.ToBtcec()
+			if err != nil {
 				goto doneInsert
 			}
-			tag = id.Address.Tag()
+
+			// Check encryption key.
+			encKey, err := pubkeyMsg.EncryptionKey.ToBtcec()
+			if err != nil {
+				goto doneInsert
+			}
+
+			id := identity.NewPublic(signKey, encKey, pubkeyMsg.NonceTrials,
+				pubkeyMsg.ExtraBytes, pubkeyMsg.Version,
+				pubkeyMsg.StreamNumber)
+
+			addrStr, err := id.Address.Encode()
+			if err != nil {
+				goto doneInsert
+			}
+
+			// Verify signature.
+			if pubkeyMsg.Version == wire.ExtendedPubKeyVersion {
+				err = cipher.TryDecryptAndVerifyPubKey(pubkeyMsg, nil)
+				if err != nil {
+					goto doneInsert
+				}
+			}
+
+			// Add public key to database.
+			db.pubIDByAddress[addrStr] = id
+
 		case wire.EncryptedPubKeyVersion:
-			tag = pubkeyMsg.Tag.Bytes() // directly included
+			// Add message to database.
+			db.encryptedPubKeyByTag[*pubkeyMsg.Tag] = pubkeyMsg // insert pubkey
 		}
-		tagH, err := wire.NewShaHash(tag)
-		if err != nil {
-			goto doneInsert
-		}
-		db.pubKeyByTag[*tagH] = pubkeyMsg // insert pubkey
 	}
 
 doneInsert: // label used because normal insertion should still succeed
@@ -467,12 +527,14 @@ func (db *MemDb) RemoveObjectByCounter(objType wire.ObjectType,
 // whose expiry time has passed (along with a margin of 3 hours). This does
 // not touch the pubkeys stored in the public key collection. This is part of
 // the database.Db interface implementation.
-func (db *MemDb) RemoveExpiredObjects() error {
+func (db *MemDb) RemoveExpiredObjects() ([]*wire.ShaHash, error) {
 	db.Lock()
 	defer db.Unlock()
 	if db.closed {
-		return database.ErrDbClosed
+		return nil, database.ErrDbClosed
 	}
+
+	removedHashes := make([]*wire.ShaHash, expiredSliceSize)
 
 	for hash, obj := range db.objectsByHash {
 		// current time - 3 hours
@@ -489,29 +551,60 @@ func (db *MemDb) RemoveExpiredObjects() error {
 
 			// remove object from object map
 			delete(db.objectsByHash, hash)
+
+			// we removed this hash
+			removedHashes = append(removedHashes, &hash)
 		}
 	}
-	return nil
+
+	return removedHashes, nil
 }
 
-// RemovePubKey removes a PubKey from the PubKey store with the specified
-// tag. Note that it doesn't touch the general object store and won't remove
-// the public key from there. This is part of the database.Db interface
-// implementation.
-func (db *MemDb) RemovePubKey(tag *wire.ShaHash) error {
+// RemoveEncryptedPubKey removes a v4 PubKey with the specified tag from the
+// encrypted PubKey store. Note that it doesn't touch the general object store
+// and won't remove the public key from there. This is part of the database.Db
+// interface implementation.
+func (db *MemDb) RemoveEncryptedPubKey(tag *wire.ShaHash) error {
 	db.Lock()
 	defer db.Unlock()
 	if db.closed {
 		return database.ErrDbClosed
 	}
 
-	_, ok := db.pubKeyByTag[*tag]
+	_, ok := db.encryptedPubKeyByTag[*tag]
 	if !ok {
 		return database.ErrNonexistentObject
 	}
 
-	delete(db.pubKeyByTag, *tag) // remove
+	delete(db.encryptedPubKeyByTag, *tag) // remove
 	return nil
+}
+
+// RemovePublicIdentity removes the public identity corresponding the given
+// address from the database. This includes any v2/v3/previously used v4
+// identities. Note that it doesn't touch the general object store and won't
+// remove the public key object from there. This is part of the database.Db
+// interface implementation.
+func (db *MemDb) RemovePublicIdentity(addr *bmutil.Address) error {
+	db.Lock()
+	defer db.Unlock()
+	if db.closed {
+		return database.ErrDbClosed
+	}
+
+	addrStr, err := addr.Encode()
+	if err != nil {
+		return err
+	}
+
+	_, ok := db.pubIDByAddress[addrStr]
+	if !ok {
+		return database.ErrNonexistentObject
+	}
+
+	delete(db.pubIDByAddress, addrStr) // remove
+	return nil
+
 }
 
 // RollbackClose discards the recent database changes to the previously saved
@@ -550,13 +643,14 @@ func (db *MemDb) Sync() error {
 // newMemDb returns a new memory-only database ready for block inserts.
 func newMemDb() *MemDb {
 	db := MemDb{
-		objectsByHash:     make(map[wire.ShaHash]*wire.MsgObject),
-		pubKeyByTag:       make(map[wire.ShaHash]*wire.MsgPubKey),
-		msgCounter:        &counter{make(map[uint64]*wire.ShaHash), 0},
-		broadcastCounter:  &counter{make(map[uint64]*wire.ShaHash), 0},
-		pubKeyCounter:     &counter{make(map[uint64]*wire.ShaHash), 0},
-		getPubKeyCounter:  &counter{make(map[uint64]*wire.ShaHash), 0},
-		unknownObjCounter: &counter{make(map[uint64]*wire.ShaHash), 0},
+		objectsByHash:        make(map[wire.ShaHash]*wire.MsgObject),
+		encryptedPubKeyByTag: make(map[wire.ShaHash]*wire.MsgPubKey),
+		pubIDByAddress:       make(map[string]*identity.Public),
+		msgCounter:           &counter{make(map[uint64]*wire.ShaHash), 0},
+		broadcastCounter:     &counter{make(map[uint64]*wire.ShaHash), 0},
+		pubKeyCounter:        &counter{make(map[uint64]*wire.ShaHash), 0},
+		getPubKeyCounter:     &counter{make(map[uint64]*wire.ShaHash), 0},
+		unknownObjCounter:    &counter{make(map[uint64]*wire.ShaHash), 0},
 	}
 	return &db
 }

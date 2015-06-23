@@ -32,9 +32,9 @@ func ReceivePubkey(object []byte, counter uint64)
 func ReceiveUnknownObject(object []byte, counter uint64)
 ```
 Receive objects of the given type from the server. Order of receiving objects
-(especially the initial unsynchronized ones) may be random. Client
-implementations must not rely on sequential values of counter. However, values
-of counter are guaranteed to be unique.
+is guaranteed to be sequential. Moreover, counter values for a particular object
+type are guaranteed to be unique. However, the same object may be sent twice
+(in a rare race condition).
 
 ## RPC Calls
 -----------

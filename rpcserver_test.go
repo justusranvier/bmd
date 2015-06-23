@@ -8,7 +8,6 @@ import (
 	"bytes"
 	"encoding/base64"
 	"net"
-	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -148,7 +147,7 @@ func testRPCSendObject(client *rpc2.Client, t *testing.T) {
 	if err != nil {
 		t.Errorf("for valid SendObject got error %v", err)
 	}
-	hash := testObj[0].InventoryHash()
+	hash := toMsgObject(testObj[0]).InventoryHash()
 
 	// Check if advertised.
 	if ok, err := serv.objectManager.haveInventory(wire.NewInvVect(hash)); !ok {
@@ -232,7 +231,7 @@ func testRPCSubscriptions(client *rpc2.Client, t *testing.T) {
 func TestRPCConnection(t *testing.T) {
 	// Address for mock listener to pass to server. The server
 	// needs at least one listener or it won't start so we mock it.
-	remoteAddr := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 8442}
+	remoteAddr := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 8445}
 
 	// Set config.
 	cfg.MaxPeers = 0
@@ -245,16 +244,10 @@ func TestRPCConnection(t *testing.T) {
 	cfg.RPCMaxClients = 1
 	defer resetCfg(cfg)()
 
-	// Load rpc listeners.
-	addrs, err := net.LookupHost("localhost")
-	if err != nil {
-		t.Fatal("Could not look up localhost.")
-	}
-	cfg.RPCListeners = make([]string, 0, len(addrs))
-	for _, addr := range addrs {
-		addr = net.JoinHostPort(addr, strconv.Itoa(defaultRPCPort))
-		cfg.RPCListeners = append(cfg.RPCListeners, addr)
-	}
+	// Set RPC listener.
+	cfg.RPCListeners = []string{net.JoinHostPort("", "8442")}
+
+	var err error
 
 	// Create a server.
 	listeners := []string{net.JoinHostPort("", "8445")}
