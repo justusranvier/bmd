@@ -116,12 +116,11 @@ type config struct {
 	DisableListen   bool          `long:"nolisten" description:"Disable listening for incoming connections -- NOTE: Listening is automatically disabled if the --connect or --proxy options are used without also specifying listen interfaces via --listen"`
 	Listeners       []string      `long:"listen" description:"Add an interface/port to listen for connections (default all interfaces port: 8444)"`
 	MaxPeers        int           `long:"maxpeers" description:"Max number of inbound and outbound peers"`
-	BanDuration     time.Duration `long:"banduration" description:"How long to ban misbehaving peers. Valid time units are {s, m, h}.  Minimum 1 second"`
 	RPCUser         string        `short:"u" long:"rpcuser" description:"Username for RPC connections"`
 	RPCPass         string        `short:"P" long:"rpcpass" default-mask:"-" description:"Password for RPC connections"`
 	RPCLimitUser    string        `long:"rpclimituser" description:"Username for limited RPC connections"`
 	RPCLimitPass    string        `long:"rpclimitpass" default-mask:"-" description:"Password for limited RPC connections"`
-	RPCListeners    []string      `long:"rpclisten" description:"Add an interface/port to listen for RPC connections (default port: 8334)"`
+	RPCListeners    []string      `long:"rpclisten" description:"Add an interface/port to listen for RPC connections (default port: 8442)"`
 	RPCCert         string        `long:"rpccert" description:"File containing the certificate file"`
 	RPCKey          string        `long:"rpckey" description:"File containing the certificate key"`
 	RPCMaxClients   int           `long:"rpcmaxclients" description:"Max number of RPC clients"`
@@ -145,8 +144,8 @@ type config struct {
 	MaxUpPerPeer    Filesize      `long:"maxupload" description:"Maximum upload rate for any peer. Valid units are {B, K, M, G} bytes/sec"`
 	MaxDownPerPeer  Filesize      `long:"maxdownload" description:"Maximum download rate for any peer. Valid units are {B, K, M, G} bytes/sec"`
 	MaxOutbound     int           `long:"maxoutbound" description:"The maximum number of outbound peers that bmd will try to maintain"`
-	RequestExpire   time.Duration `long:"requestexpire" description:"Time to expire an object request and disconnect the peer assigned to it. Valid time units are {s, m, h}. Minimum 10 seconds"`
-	CleanupInterval time.Duration `long:"cleanupinterval" description:"Time interval to remove expired objects. Valid time units are {s, m, h}. Minimum 20 minutes"`
+	RequestExpire   time.Duration `long:"requestexpire" description:"Duration after which an object request to a peer must expire. Valid time units are {s, m, h}. Minimum 10 seconds"`
+	CleanupInterval time.Duration `long:"cleanupinterval" description:"Time interval after which expired objects are removed. Valid time units are {s, m, h}. Minimum 20 minutes"`
 	onionlookup     func(string) ([]net.IP, error)
 	lookup          func(string) ([]net.IP, error)
 	oniondial       func(string, string) (net.Conn, error)
@@ -354,7 +353,6 @@ func loadConfig(isTest bool) (*config, []string, error) {
 		ConfigFile:      defaultConfigFile,
 		DebugLevel:      defaultLogLevel,
 		MaxPeers:        defaultMaxPeers,
-		BanDuration:     defaultBanDuration,
 		RPCMaxClients:   defaultMaxRPCClients,
 		DataDir:         defaultDataDir,
 		LogDir:          defaultLogDir,
@@ -477,15 +475,6 @@ func loadConfig(isTest bool) (*config, []string, error) {
 			fmt.Fprintln(os.Stderr, usageMessage)
 			return nil, nil, err
 		}
-	}
-
-	// Don't allow ban durations that are too short.
-	if cfg.BanDuration < time.Duration(time.Second) {
-		str := "%s: The banduration option may not be less than 1s -- parsed [%v]"
-		err := fmt.Errorf(str, funcName, cfg.BanDuration)
-		fmt.Fprintln(os.Stderr, err)
-		fmt.Fprintln(os.Stderr, usageMessage)
-		return nil, nil, err
 	}
 
 	// Don't allow request expire times that are too short.
