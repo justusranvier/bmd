@@ -41,6 +41,15 @@ func (I *Inventory) AddKnown(invVect *wire.InvVect) {
 	I.known.Add(invVect)
 }
 
+// RemoveKnown adds the passed inventory to the cache of known inventory for the
+// peer.
+func (I *Inventory) RemoveKnown(invVect *wire.InvVect) {
+	I.mutex.Lock()
+	defer I.mutex.Unlock()
+
+	I.known.Delete(invVect)
+}
+
 // AddRequest marks that a certain number of objects have been requested.
 func (I *Inventory) AddRequest(i int) {
 	atomic.AddInt32(&I.requested, int32(i))

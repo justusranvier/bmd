@@ -26,20 +26,21 @@ import (
 )
 
 const (
-	defaultConfigFilename = "bmd.conf"
-	defaultLogLevel       = "info"
-	defaultLogDirname     = "logs"
-	defaultLogFilename    = "bmd.log"
-	defaultMaxPeers       = 125
-	defaultBanDuration    = time.Hour * 24
-	defaultMaxRPCClients  = 25
-	defaultDbType         = "memdb"
-	defaultPort           = 8444
-	defaultRPCPort        = 8442
-	defaultMaxUpPerPeer   = 2 * 1024 * 1024 // 2MBps
-	defaultMaxDownPerPeer = 2 * 1024 * 1024 // 2MBps
-	defaultMaxOutbound    = 10
-	defaultRequestTimeout = time.Minute * 3
+	defaultConfigFilename  = "bmd.conf"
+	defaultLogLevel        = "info"
+	defaultLogDirname      = "logs"
+	defaultLogFilename     = "bmd.log"
+	defaultMaxPeers        = 125
+	defaultBanDuration     = time.Hour * 24
+	defaultMaxRPCClients   = 25
+	defaultDbType          = "memdb"
+	defaultPort            = 8444
+	defaultRPCPort         = 8442
+	defaultMaxUpPerPeer    = 2 * 1024 * 1024 // 2MBps
+	defaultMaxDownPerPeer  = 2 * 1024 * 1024 // 2MBps
+	defaultMaxOutbound     = 10
+	defaultRequestTimeout  = time.Minute * 3
+	defaultCleanupInterval = time.Hour
 )
 
 var (
@@ -106,50 +107,51 @@ func (size *Filesize) UnmarshalFlag(value string) error {
 //
 // See loadConfig for details on the configuration load process.
 type config struct {
-	ShowVersion    bool          `short:"V" long:"version" description:"Display version information and exit"`
-	ConfigFile     string        `short:"C" long:"configfile" description:"Path to configuration file"`
-	DataDir        string        `short:"b" long:"datadir" description:"Directory to store data"`
-	LogDir         string        `long:"logdir" description:"Directory to log output"`
-	AddPeers       []string      `short:"a" long:"addpeer" description:"Add a peer to connect with at startup"`
-	ConnectPeers   []string      `long:"connect" description:"Connect only to the specified peers at startup"`
-	DisableListen  bool          `long:"nolisten" description:"Disable listening for incoming connections -- NOTE: Listening is automatically disabled if the --connect or --proxy options are used without also specifying listen interfaces via --listen"`
-	Listeners      []string      `long:"listen" description:"Add an interface/port to listen for connections (default all interfaces port: 8444)"`
-	MaxPeers       int           `long:"maxpeers" description:"Max number of inbound and outbound peers"`
-	BanDuration    time.Duration `long:"banduration" description:"How long to ban misbehaving peers. Valid time units are {s, m, h}.  Minimum 1 second"`
-	RPCUser        string        `short:"u" long:"rpcuser" description:"Username for RPC connections"`
-	RPCPass        string        `short:"P" long:"rpcpass" default-mask:"-" description:"Password for RPC connections"`
-	RPCLimitUser   string        `long:"rpclimituser" description:"Username for limited RPC connections"`
-	RPCLimitPass   string        `long:"rpclimitpass" default-mask:"-" description:"Password for limited RPC connections"`
-	RPCListeners   []string      `long:"rpclisten" description:"Add an interface/port to listen for RPC connections (default port: 8334)"`
-	RPCCert        string        `long:"rpccert" description:"File containing the certificate file"`
-	RPCKey         string        `long:"rpckey" description:"File containing the certificate key"`
-	RPCMaxClients  int           `long:"rpcmaxclients" description:"Max number of RPC clients"`
-	DisableRPC     bool          `long:"norpc" description:"Disable built-in RPC server -- NOTE: The RPC server is disabled by default if no rpcuser/rpcpass or rpclimituser/rpclimitpass is specified"`
-	DisableTLS     bool          `long:"notls" description:"Disable TLS for the RPC server -- NOTE: This is only allowed if the RPC server is bound to localhost"`
-	DisableDNSSeed bool          `long:"nodnsseed" description:"Disable DNS seeding for peers"`
-	ExternalIPs    []string      `long:"externalip" description:"Add an ip to the list of local addresses we claim to listen on to peers"`
-	Proxy          string        `long:"proxy" description:"Connect via SOCKS5 proxy (eg. 127.0.0.1:9050)"`
-	ProxyUser      string        `long:"proxyuser" description:"Username for proxy server"`
-	ProxyPass      string        `long:"proxypass" default-mask:"-" description:"Password for proxy server"`
-	OnionProxy     string        `long:"onion" description:"Connect to tor hidden services via SOCKS5 proxy (eg. 127.0.0.1:9050)"`
-	OnionProxyUser string        `long:"onionuser" description:"Username for onion proxy server"`
-	OnionProxyPass string        `long:"onionpass" default-mask:"-" description:"Password for onion proxy server"`
-	NoOnion        bool          `long:"noonion" description:"Disable connecting to tor hidden services"`
-	TorIsolation   bool          `long:"torisolation" description:"Enable Tor stream isolation by randomizing user credentials for each connection."`
-	DbType         string        `long:"dbtype" description:"Database backend to use"`
-	Profile        string        `long:"profile" description:"Enable HTTP profiling on given port -- NOTE port must be between 1024 and 65536"`
-	CPUProfile     string        `long:"cpuprofile" description:"Write CPU profile to the specified file"`
-	DebugLevel     string        `short:"d" long:"debuglevel" description:"Logging level for all subsystems {trace, debug, info, warn, error, critical} -- You may also specify <subsystem>=<level>,<subsystem2>=<level>,... to set the log level for individual subsystems -- Use show to list available subsystems"`
-	Upnp           bool          `long:"upnp" description:"Use UPnP to map our listening port outside of NAT"`
-	MaxUpPerPeer   Filesize      `long:"maxupload" description:"Maximum upload rate for any peer. Valid units are {B, K, M, G} bytes/sec"`
-	MaxDownPerPeer Filesize      `long:"maxdownload" description:"Maximum download rate for any peer. Valid units are {B, K, M, G} bytes/sec"`
-	MaxOutbound    int           `long:"maxoutbound" description:"The maximum number of outbound peers that bmd will try to maintain"`
-	RequestExpire  time.Duration `long:"requestexpire" description:"Time to expire an object request and disconnect the peer assigned to it. Valid time units are {s, m, h}. Minimum 10 seconds"`
-	onionlookup    func(string) ([]net.IP, error)
-	lookup         func(string) ([]net.IP, error)
-	oniondial      func(string, string) (net.Conn, error)
-	dial           func(string, string) (net.Conn, error)
-	dnsSeeds       []string
+	ShowVersion     bool          `short:"V" long:"version" description:"Display version information and exit"`
+	ConfigFile      string        `short:"C" long:"configfile" description:"Path to configuration file"`
+	DataDir         string        `short:"b" long:"datadir" description:"Directory to store data"`
+	LogDir          string        `long:"logdir" description:"Directory to log output"`
+	AddPeers        []string      `short:"a" long:"addpeer" description:"Add a peer to connect with at startup"`
+	ConnectPeers    []string      `long:"connect" description:"Connect only to the specified peers at startup"`
+	DisableListen   bool          `long:"nolisten" description:"Disable listening for incoming connections -- NOTE: Listening is automatically disabled if the --connect or --proxy options are used without also specifying listen interfaces via --listen"`
+	Listeners       []string      `long:"listen" description:"Add an interface/port to listen for connections (default all interfaces port: 8444)"`
+	MaxPeers        int           `long:"maxpeers" description:"Max number of inbound and outbound peers"`
+	BanDuration     time.Duration `long:"banduration" description:"How long to ban misbehaving peers. Valid time units are {s, m, h}.  Minimum 1 second"`
+	RPCUser         string        `short:"u" long:"rpcuser" description:"Username for RPC connections"`
+	RPCPass         string        `short:"P" long:"rpcpass" default-mask:"-" description:"Password for RPC connections"`
+	RPCLimitUser    string        `long:"rpclimituser" description:"Username for limited RPC connections"`
+	RPCLimitPass    string        `long:"rpclimitpass" default-mask:"-" description:"Password for limited RPC connections"`
+	RPCListeners    []string      `long:"rpclisten" description:"Add an interface/port to listen for RPC connections (default port: 8334)"`
+	RPCCert         string        `long:"rpccert" description:"File containing the certificate file"`
+	RPCKey          string        `long:"rpckey" description:"File containing the certificate key"`
+	RPCMaxClients   int           `long:"rpcmaxclients" description:"Max number of RPC clients"`
+	DisableRPC      bool          `long:"norpc" description:"Disable built-in RPC server -- NOTE: The RPC server is disabled by default if no rpcuser/rpcpass or rpclimituser/rpclimitpass is specified"`
+	DisableTLS      bool          `long:"notls" description:"Disable TLS for the RPC server -- NOTE: This is only allowed if the RPC server is bound to localhost"`
+	DisableDNSSeed  bool          `long:"nodnsseed" description:"Disable DNS seeding for peers"`
+	ExternalIPs     []string      `long:"externalip" description:"Add an ip to the list of local addresses we claim to listen on to peers"`
+	Proxy           string        `long:"proxy" description:"Connect via SOCKS5 proxy (eg. 127.0.0.1:9050)"`
+	ProxyUser       string        `long:"proxyuser" description:"Username for proxy server"`
+	ProxyPass       string        `long:"proxypass" default-mask:"-" description:"Password for proxy server"`
+	OnionProxy      string        `long:"onion" description:"Connect to tor hidden services via SOCKS5 proxy (eg. 127.0.0.1:9050)"`
+	OnionProxyUser  string        `long:"onionuser" description:"Username for onion proxy server"`
+	OnionProxyPass  string        `long:"onionpass" default-mask:"-" description:"Password for onion proxy server"`
+	NoOnion         bool          `long:"noonion" description:"Disable connecting to tor hidden services"`
+	TorIsolation    bool          `long:"torisolation" description:"Enable Tor stream isolation by randomizing user credentials for each connection."`
+	DbType          string        `long:"dbtype" description:"Database backend to use"`
+	Profile         string        `long:"profile" description:"Enable HTTP profiling on given port -- NOTE port must be between 1024 and 65536"`
+	CPUProfile      string        `long:"cpuprofile" description:"Write CPU profile to the specified file"`
+	DebugLevel      string        `short:"d" long:"debuglevel" description:"Logging level for all subsystems {trace, debug, info, warn, error, critical} -- You may also specify <subsystem>=<level>,<subsystem2>=<level>,... to set the log level for individual subsystems -- Use show to list available subsystems"`
+	Upnp            bool          `long:"upnp" description:"Use UPnP to map our listening port outside of NAT"`
+	MaxUpPerPeer    Filesize      `long:"maxupload" description:"Maximum upload rate for any peer. Valid units are {B, K, M, G} bytes/sec"`
+	MaxDownPerPeer  Filesize      `long:"maxdownload" description:"Maximum download rate for any peer. Valid units are {B, K, M, G} bytes/sec"`
+	MaxOutbound     int           `long:"maxoutbound" description:"The maximum number of outbound peers that bmd will try to maintain"`
+	RequestExpire   time.Duration `long:"requestexpire" description:"Time to expire an object request and disconnect the peer assigned to it. Valid time units are {s, m, h}. Minimum 10 seconds"`
+	CleanupInterval time.Duration `long:"cleanupinterval" description:"Time interval to remove expired objects. Valid time units are {s, m, h}. Minimum 20 minutes"`
+	onionlookup     func(string) ([]net.IP, error)
+	lookup          func(string) ([]net.IP, error)
+	oniondial       func(string, string) (net.Conn, error)
+	dial            func(string, string) (net.Conn, error)
+	dnsSeeds        []string
 }
 
 // cleanAndExpandPath expands environment variables and leading ~ in the
@@ -349,21 +351,22 @@ func newConfigParser(cfg *config, options flags.Options) *flags.Parser {
 func loadConfig(isTest bool) (*config, []string, error) {
 	// Default config.
 	cfg := config{
-		ConfigFile:     defaultConfigFile,
-		DebugLevel:     defaultLogLevel,
-		MaxPeers:       defaultMaxPeers,
-		BanDuration:    defaultBanDuration,
-		RPCMaxClients:  defaultMaxRPCClients,
-		DataDir:        defaultDataDir,
-		LogDir:         defaultLogDir,
-		DbType:         defaultDbType,
-		RPCKey:         defaultRPCKeyFile,
-		RPCCert:        defaultRPCCertFile,
-		MaxDownPerPeer: defaultMaxDownPerPeer,
-		MaxUpPerPeer:   defaultMaxUpPerPeer,
-		MaxOutbound:    defaultMaxOutbound,
-		RequestExpire:  defaultRequestTimeout,
-		dnsSeeds:       defaultDNSSeeds,
+		ConfigFile:      defaultConfigFile,
+		DebugLevel:      defaultLogLevel,
+		MaxPeers:        defaultMaxPeers,
+		BanDuration:     defaultBanDuration,
+		RPCMaxClients:   defaultMaxRPCClients,
+		DataDir:         defaultDataDir,
+		LogDir:          defaultLogDir,
+		DbType:          defaultDbType,
+		RPCKey:          defaultRPCKeyFile,
+		RPCCert:         defaultRPCCertFile,
+		MaxDownPerPeer:  defaultMaxDownPerPeer,
+		MaxUpPerPeer:    defaultMaxUpPerPeer,
+		MaxOutbound:     defaultMaxOutbound,
+		RequestExpire:   defaultRequestTimeout,
+		dnsSeeds:        defaultDNSSeeds,
+		CleanupInterval: defaultCleanupInterval,
 	}
 
 	// Pre-parse the command line options to see if an alternative config
@@ -488,6 +491,15 @@ func loadConfig(isTest bool) (*config, []string, error) {
 	// Don't allow request expire times that are too short.
 	if cfg.RequestExpire < time.Duration(10*time.Second) {
 		str := "%s: The requestexpire option may not be less than 10s -- parsed [%v]"
+		err := fmt.Errorf(str, funcName, cfg.RequestExpire)
+		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, usageMessage)
+		return nil, nil, err
+	}
+
+	// Don't allow cleanup times that are too short.
+	if cfg.CleanupInterval < time.Duration(20*time.Minute) {
+		str := "%s: The cleanupinterval option may not be less than 20m -- parsed [%v]"
 		err := fmt.Errorf(str, funcName, cfg.RequestExpire)
 		fmt.Fprintln(os.Stderr, err)
 		fmt.Fprintln(os.Stderr, usageMessage)

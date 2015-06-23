@@ -463,6 +463,7 @@ func (om *ObjectManager) handleRelayInvMsg(inv []*wire.InvVect) {
 func (om *ObjectManager) objectHandler() {
 	clearTick := time.NewTicker(cfg.RequestExpire / 2)
 	relayInvTick := time.NewTicker(10 * time.Second)
+	cleanupTick := time.NewTicker(cfg.CleanupInterval)
 
 	for {
 		select {
@@ -493,6 +494,20 @@ func (om *ObjectManager) objectHandler() {
 			om.relayInvList = list.New()
 			objmgrLog.Trace("Relying list of invs of size ", len(invs))
 			om.handleRelayInvMsg(invs)
+
+		// Clean all expired inventory from all peers.
+		case <-cleanupTick.C:
+			expired, err := om.server.db.RemoveExpiredObjects()
+			if len(expired) == 0 || err != nil {
+				continue
+			}
+			for _, ex := range expired {
+				inv := &wire.InvVect{Hash: *ex}
+
+				for peer := range om.peers {
+					peer.inventory.RemoveKnown(inv)
+				}
+			}
 
 		case m := <-om.msgChan:
 			switch msg := m.(type) {

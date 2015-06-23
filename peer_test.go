@@ -918,7 +918,7 @@ func init() {
 	var err error
 	cfg, _, err = loadConfig(true)
 	if err != nil {
-		panic("Config failed to load.")
+		panic(fmt.Sprint("Config failed to load: ", err))
 	}
 	cfg.MaxPeers = 1
 	cfg.DisableDNSSeed = true
