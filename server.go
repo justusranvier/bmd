@@ -224,16 +224,6 @@ func (s *server) handleDonePeerMsg(p *bmpeer) {
 	}
 }
 
-// handleBanPeerMsg deals with banning peers. It is invoked from the
-// peerHandler goroutine.
-func (s *server) handleBanPeerMsg(p *bmpeer) {
-	host, _, err := net.SplitHostPort(p.addr.String())
-	if err != nil {
-		return
-	}
-	s.state.banned[host] = time.Now().Add(cfg.BanDuration)
-}
-
 type getConnCountMsg struct {
 	reply chan int32
 }
@@ -391,10 +381,6 @@ func (s *server) peerHandler() {
 		// Disconnected peers.
 		case p := <-s.donePeers:
 			s.handleDonePeerMsg(p)
-
-		// Peer to ban.
-		case p := <-s.banPeers:
-			s.handleBanPeerMsg(p)
 
 		// Disconnect a peer. There is an inherent problem with disconnecting
 		// a peer because it might have to send messages to be read by the go
