@@ -301,6 +301,12 @@ func TestRPCConnection(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// If two connections take place at a close enough time together, it can
+	// happen that the second connection is accepted before the connection count
+	// has been updated after the previous connection. Thus, we wait a tiny amount
+	// to make sure the count is updated. This could probably be fixed eventually.
+	time.Sleep(20 * time.Millisecond)
+
 	_, _, err = websocket.DefaultDialer.Dial(rpcLoc, nil)
 	if err == nil {
 		t.Error("RPCMaxClients isn't enforced. Second connection was successful.")

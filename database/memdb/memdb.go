@@ -534,7 +534,7 @@ func (db *MemDb) RemoveExpiredObjects() ([]*wire.ShaHash, error) {
 		return nil, database.ErrDbClosed
 	}
 
-	removedHashes := make([]*wire.ShaHash, expiredSliceSize)
+	removedHashes := make([]*wire.ShaHash, 0, expiredSliceSize)
 
 	for hash, obj := range db.objectsByHash {
 		// current time - 3 hours
