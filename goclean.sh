@@ -12,8 +12,7 @@ set -e
 # Automatic checks
 test -z "$(gofmt -l -w .     | tee /dev/stderr)"
 test -z "$(goimports -l -w . | tee /dev/stderr)"
-test -z "$(golint ./..       | tee /dev/stderr)"
-go vet ./...
+test -z "$(golint ./..       | grep -ve ".pb.go" | tee /dev/stderr)"
 env GORACE="halt_on_error=1" go test -race -v ./...
 
 # Run test coverage on each subdirectories and merge the coverage profile.

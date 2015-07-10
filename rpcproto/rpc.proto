@@ -1,0 +1,72 @@
+// Copyright (c) 2015 Monetas.
+// Use of this source code is governed by an ISC
+// license that can be found in the LICENSE file.
+
+syntax="proto3";
+option go_package="rpcproto";
+
+service Bmd {
+  // Retrieve the public identity of the given address. This is constructed from
+  // public keys stored in the database. If the public key for the specified
+  // address doesn't exist, an error is returned.
+  rpc GetIdentity(GetIdentityRequest) returns (GetIdentityReply);
+
+  // Send the specified object onto the network. The object is first verified,
+  // then inserted into bmd's database and advertised onto the network. Return
+  // value is the counter value of the inserted object.
+  rpc SendObject(Object) returns (SendObjectReply);
+
+  // Gets objects of the specified type that have their counter values starting
+  // from what is specified. This method streams new objects until the stream
+  // is closed. Objects are guaranteed to be in ascending order.
+  rpc GetObjects(GetObjectsRequest) returns (stream Object);
+}
+
+message GetIdentityRequest {
+  // A properly formatted Bitmessage address.
+  string address = 1;
+}
+
+message GetIdentityReply {
+  // Nonce Trials Per Byte: POW parameter.
+  uint64 nonce_trials = 1;
+
+  // Extra bytes: POW parameter.
+  uint64 extra_bytes = 2;
+
+  // Uncompressed secp256k1 public key.
+  bytes signing_key = 3;
+
+  // Uncompressed secp256k1 public key.
+  bytes encryption_key = 4;
+}
+
+message Object {
+  // Properly serialized object bytes. It includes the object header (but not
+  // the Bitmessage message header).
+  bytes contents = 1;
+  // Counter value of the object, as in bmd's database. It is ignored with
+  // SendObject.
+  uint64 counter = 2;
+}
+
+message SendObjectReply {
+  // Counter value of the object, as inserted in bmd's database.
+  uint64 counter = 1;
+}
+
+// ObjectType is an enum which contains various types of objects.
+enum ObjectType {
+  GETPUBKEY = 0;
+  PUBKEY = 1;
+  MESSAGE = 2;
+  BROADCAST = 3;
+  UNKNOWN = 99;
+}
+
+message GetObjectsRequest {
+  // Type of object the client wants to receive.
+  ObjectType object_type = 1;
+  // Counter value the server should start sending object messages from.
+  uint64 from_counter = 2;
+}
