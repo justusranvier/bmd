@@ -107,9 +107,8 @@ type MockPeer struct {
 	// A channel used to report invalid states to the test.
 	report chan TestReport
 
-	// A function that manages the sequence of steps that the test should go through.
+	// A structure that manages the sequence of steps that the test should go through.
 	// This is the part that is customized for each test.
-	//handle     func(wire.Message) *PeerAction
 	peerTest PeerTest
 
 	// A list of hashes of objects that have been sent to the real peer.

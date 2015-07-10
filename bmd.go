@@ -12,10 +12,20 @@ import (
 	"net/http"
 	_ "net/http/pprof"
 	"os"
+	"path/filepath"
 	"runtime"
 	"runtime/pprof"
 
+	"github.com/monetas/bmd/database"
+	_ "github.com/monetas/bmd/database/memdb"
 	"github.com/monetas/bmd/peer"
+)
+
+const (
+	// objectDbNamePrefix is the prefix for the object database name. The
+	// database type is appended to this value to form the full object database
+	// name.
+	objectDbNamePrefix = "objects"
 )
 
 var (
@@ -121,4 +131,85 @@ func main() {
 	if err := bmdMain(); err != nil {
 		os.Exit(1)
 	}
+}
+
+// objectDbPath returns the path to the object database given a database type.
+func objectDbPath(dbType string) string {
+	// The database name is based on the database type.
+	dbName := objectDbNamePrefix + "_" + dbType
+	if dbType == "sqlite" {
+		dbName = dbName + ".db"
+	}
+	dbPath := filepath.Join(cfg.DataDir, dbName)
+	return dbPath
+}
+
+// warnMultipeDBs shows a warning if multiple database types are detected.
+// This is not a situation most users want.  It is handy for development however
+// to support multiple side-by-side databases.
+func warnMultipeDBs(dbType string) {
+	// This is intentionally not using the known db types which depend
+	// on the database types compiled into the binary since we want to
+	// detect legacy db types as well.
+	dbTypes := []string{"leveldb", "sqlite"}
+	duplicateDbPaths := make([]string, 0, len(dbTypes)-1)
+	for _, dbt := range dbTypes {
+		if dbt == dbType {
+			continue
+		}
+
+		// Store db path as a duplicate db if it exists.
+		/*dbPath := blockDbPath(dbType)
+		if fileExists(dbPath) {
+			duplicateDbPaths = append(duplicateDbPaths, dbPath)
+		}*/
+	}
+
+	// Warn if there are extra databases.
+	if len(duplicateDbPaths) > 0 {
+		// TODO
+	}
+}
+
+// setupDB loads (or creates when needed) the object database taking into
+// account the selected database backend. It also contains additional logic
+// such warning the user if there are multiple databases which consume space on
+// the file system.
+func setupDB(dbType, dbPath string) (database.Db, error) {
+	// The memdb backend does not have a file path associated with it, so
+	// handle it uniquely.  We also don't want to worry about the multiple
+	// database type warnings when running with the memory database.
+	if dbType == "memdb" {
+		db, err := database.CreateDB(dbType)
+		if err != nil {
+			return nil, err
+		}
+		return db, nil
+	}
+
+	warnMultipeDBs(dbType)
+
+	// The database name is based on the database type.
+	//dbPath := blockDbPath(dbType)
+
+	db, err := database.OpenDB(dbType, dbPath)
+	if err != nil {
+		// Return the error if it's not because the database
+		// doesn't exist.
+		if err != database.ErrDbDoesNotExist {
+			return nil, err
+		}
+
+		// Create the db if it does not exist.
+		/*err = os.MkdirAll(cfg.DataDir, 0700)
+		if err != nil {
+			return nil, err
+		}*/
+		db, err = database.CreateDB(dbType, dbPath)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return db, nil
 }

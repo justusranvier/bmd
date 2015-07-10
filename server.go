@@ -23,6 +23,7 @@ import (
 
 	"github.com/monetas/bmd/addrmgr"
 	"github.com/monetas/bmd/database"
+	"github.com/monetas/bmd/objmgr"
 	"github.com/monetas/bmd/peer"
 	"github.com/monetas/bmutil/wire"
 )
@@ -44,12 +45,32 @@ const (
 	connectionRetryInterval = time.Second * 10
 )
 
+// randomUint16Number returns a random uint16 in a specified input range. Note
+// that the range is in zeroth ordering; if you pass it 1800, you will get
+// values from 0 to 1800.
+func randomUint16Number(max uint16) uint16 {
+	// In order to avoid modulo bias and ensure every possible outcome in
+	// [0, max) has equal probability, the random number must be sampled
+	// from a random source that has a range limited to a multiple of the
+	// modulus.
+	var randomNumber uint16
+	var limitRange = (math.MaxUint16 / max) * max
+	for {
+		binary.Read(rand.Reader, binary.LittleEndian, &randomNumber)
+		if randomNumber < limitRange {
+			return (randomNumber % max)
+		}
+	}
+}
+
+type reconnectionAttempts uint32
+
 // The peerState is used by the server to keep track of what the peers it is
 // connected to are up to.
 type peerState struct {
-	peers            map[*bmpeer]struct{}
-	outboundPeers    map[*bmpeer]struct{}
-	persistentPeers  map[*bmpeer]struct{}
+	peers            map[*peer.Peer]struct{}
+	outboundPeers    map[*peer.Peer]struct{}
+	persistentPeers  map[*peer.Peer]reconnectionAttempts
 	banned           map[string]time.Time
 	outboundGroups   map[string]int
 	maxOutboundPeers int
@@ -73,7 +94,7 @@ func (p *peerState) NeedMoreOutbound() bool {
 
 // forAllOutboundPeers is a helper function that runs closure on all outbound
 // peers known to peerState
-func (p *peerState) forAllOutboundPeers(closure func(p *bmpeer)) {
+func (p *peerState) forAllOutboundPeers(closure func(p *peer.Peer)) {
 	for e := range p.outboundPeers {
 		closure(e)
 	}
@@ -84,7 +105,7 @@ func (p *peerState) forAllOutboundPeers(closure func(p *bmpeer)) {
 
 // forAllPeers is a helper function that runs closure on all peers known to
 // peerState.
-func (p *peerState) forAllPeers(closure func(p *bmpeer)) {
+func (p *peerState) forAllPeers(closure func(p *peer.Peer)) {
 	for e := range p.peers {
 		closure(e)
 	}
@@ -93,9 +114,9 @@ func (p *peerState) forAllPeers(closure func(p *bmpeer)) {
 
 func newPeerState(maxOutbound int) *peerState {
 	return &peerState{
-		peers:            make(map[*bmpeer]struct{}),
-		persistentPeers:  make(map[*bmpeer]struct{}),
-		outboundPeers:    make(map[*bmpeer]struct{}),
+		peers:            make(map[*peer.Peer]struct{}),
+		persistentPeers:  make(map[*peer.Peer]reconnectionAttempts),
+		outboundPeers:    make(map[*peer.Peer]struct{}),
 		banned:           make(map[string]time.Time),
 		outboundGroups:   make(map[string]int),
 		maxOutboundPeers: maxOutbound,
@@ -103,7 +124,7 @@ func newPeerState(maxOutbound int) *peerState {
 }
 
 // server provides a bitmssage server for handling communications to and from
-// bitmessage peers.
+// bitmessage peers. It satisfies the peer.server and objmgr.server interfaces.
 type server struct {
 	nonce         uint64
 	listeners     []peer.Listener
@@ -111,12 +132,12 @@ type server struct {
 	shutdown      int32 // atomic
 	shutdownSched int32 // atomic
 	addrManager   *addrmgr.AddrManager
-	objectManager *ObjectManager
+	objectManager *objmgr.ObjectManager
 	state         *peerState
-	newPeers      chan *bmpeer
-	donePeers     chan *bmpeer
-	banPeers      chan *bmpeer
-	disconPeers   chan *bmpeer
+	newPeers      chan *peer.Peer
+	donePeers     chan *peer.Peer
+	banPeers      chan *peer.Peer
+	disconPeers   chan *peer.Peer
 	wakeup        chan struct{}
 	wg            sync.WaitGroup
 	quit          chan struct{}
@@ -125,46 +146,69 @@ type server struct {
 	nat           NAT
 }
 
-// randomUint16Number returns a random uint16 in a specified input range. Note
-// that the range is in zeroth ordering; if you pass it 1800, you will get
-// values from 0 to 1800.
-func randomUint16Number(max uint16) uint16 {
-	// In order to avoid modulo bias and ensure every possible outcome in
-	// [0, max) has equal probability, the random number must be sampled
-	// from a random source that has a range limited to a multiple of the
-	// modulus.
-	var randomNumber uint16
-	var limitRange = (math.MaxUint16 / max) * max
-	for {
-		binary.Read(rand.Reader, binary.LittleEndian, &randomNumber)
-		if randomNumber < limitRange {
-			return (randomNumber % max)
-		}
+// Nonce returns the server's nonce. Part of the peer.server interface.
+func (s *server) Nonce() uint64 {
+	return s.nonce
+}
+
+// AddrManager returns a pointer to the address manager. Part of the peer.server interface.
+func (s *server) AddrManager() *addrmgr.AddrManager {
+	return s.addrManager
+}
+
+// ObjectManager returns an interface representing the object manager.
+// Part of the peer.server interface.
+func (s *server) ObjectManager() peer.ObjectManager {
+	return s.objectManager
+}
+
+// Db returns the database. Part of the peer.server interface.
+func (s *server) Db() database.Db {
+	return s.db
+}
+
+// DonePeer tells the server that a peer has disconnected and can be removed.
+// Part of the peer.server interface.
+func (s *server) DonePeer(p *peer.Peer) {
+	s.donePeers <- p
+}
+
+// DisconnectPeer tells the server to disconnect a fully-connected peer.
+// Part of the objmgr.server interface.
+func (s *server) DisconnectPeer(p *peer.Peer) {
+	s.disconPeers <- p
+}
+
+// NotifyObject notifies the rpc server of a new object. Part of the
+// objmgr.server interface.
+func (s *server) NotifyObject(counter wire.ObjectType) {
+	if !cfg.DisableRPC {
+		s.rpcServer.NotifyObject(counter)
 	}
 }
 
 // handleAddPeerMsg deals with adding new peers. It is invoked from the
 // peerHandler goroutine.
-func (s *server) handleAddPeerMsg(p *bmpeer) bool {
+func (s *server) handleAddPeerMsg(p *peer.Peer) bool {
 	if p == nil {
 		return false
 	}
 
 	// Ignore new peers if we're shutting down.
 	if atomic.LoadInt32(&s.shutdown) != 0 {
-		p.disconnect()
+		p.Disconnect()
 		return false
 	}
 
 	// Disconnect banned peers.
-	host, _, err := net.SplitHostPort(p.addr.String())
+	host, _, err := net.SplitHostPort(p.Addr().String())
 	if err != nil {
-		p.disconnect()
+		p.Disconnect()
 		return false
 	}
 	if banEnd, ok := s.state.banned[host]; ok {
 		if time.Now().Before(banEnd) {
-			p.disconnect()
+			p.Disconnect()
 			return false
 		}
 
@@ -175,21 +219,21 @@ func (s *server) handleAddPeerMsg(p *bmpeer) bool {
 
 	// Limit max number of total peers.
 	if s.state.Count() >= cfg.MaxPeers {
-		p.disconnect()
+		p.Disconnect()
 		// TODO(oga) how to handle permanent peers here?
 		// they should be rescheduled.
 		return false
 	}
-	peerLog.Infof(p.peer.PrependAddr("Added to server."))
+	peerLog.Infof(p.PrependAddr("Added to server."))
 
 	// Add the new peer and start it.
-	if p.inbound {
+	if p.Inbound {
 		s.state.peers[p] = struct{}{}
 		p.Start()
 	} else {
-		s.state.outboundGroups[addrmgr.GroupKey(p.na)]++
+		s.state.outboundGroups[addrmgr.GroupKey(p.Na)]++
 		if p.Persistent {
-			s.state.persistentPeers[p] = struct{}{}
+			s.state.persistentPeers[p] = 0
 		} else {
 			s.state.outboundPeers[p] = struct{}{}
 		}
@@ -200,27 +244,28 @@ func (s *server) handleAddPeerMsg(p *bmpeer) bool {
 
 // handleDonePeerMsg deals with peers that have signalled they are done. It is
 // invoked from the peerHandler goroutine.
-func (s *server) handleDonePeerMsg(p *bmpeer) {
-	var list map[*bmpeer]struct{}
+func (s *server) handleDonePeerMsg(p *peer.Peer) {
 	if p.Persistent {
-		list = s.state.persistentPeers
-		peerLog.Info(p.peer.PrependAddr("Removed from server. "), len(list), " persistent peers remain.")
-	} else if p.inbound {
-		list = s.state.peers
-		peerLog.Info(p.peer.PrependAddr("Removed from server. "), len(list), " inbound peers remain.")
-	} else {
-		list = s.state.outboundPeers
-		s.state.outboundGroups[addrmgr.GroupKey(p.na)]--
-		peerLog.Info(p.peer.PrependAddr("Removed from server. "), len(list)-1, " outbound peers remain.")
-	}
+		list := s.state.persistentPeers
+		retries := list[p] + 1
+		delete(list, p)
+		peerLog.Info(p.PrependAddr("Removed from server. "), len(list), " persistent peers remain.")
 
-	delete(list, p)
-	// Issue an asynchronous reconnect if the peer was a
-	// persistent outbound connection.
-	if !p.inbound && p.Persistent && atomic.LoadInt32(&s.shutdown) == 0 {
-		// TODO eventually we shouldn't work with addresses represented as strings at all.
-		list[newOutboundPeer(p.addr.String(), s, p.na.Stream, true, p.RetryCount+1)] = struct{}{}
-		peerLog.Infof(p.peer.PrependAddr("Reconnected."))
+		if !p.Inbound && atomic.LoadInt32(&s.shutdown) == 0 {
+			// TODO eventually we shouldn't work with addresses represented as strings at all.
+			list[NewOutboundPeer(p.Addr().String(), s, p.Na.Stream, true, retries)] = retries
+			peerLog.Infof(p.PrependAddr("Reconnected."))
+		}
+
+	} else if p.Inbound {
+		delete(s.state.peers, p)
+		peerLog.Info(p.PrependAddr("Removed from server. "),
+			len(s.state.peers)-1, " inbound peers remain.")
+	} else {
+		delete(s.state.outboundPeers, p)
+		s.state.outboundGroups[addrmgr.GroupKey(p.Na)]--
+		peerLog.Info(p.PrependAddr("Removed from server. "),
+			len(s.state.outboundPeers)-1, " outbound peers remain.")
 	}
 }
 
@@ -241,7 +286,7 @@ type delNodeMsg struct {
 }
 
 type getAddedNodesMsg struct {
-	reply chan []*bmpeer
+	reply chan []*peer.Peer
 }
 
 // AddNewPeer adds an ip address to the peer handler and adds permanent connections
@@ -254,13 +299,13 @@ func (s *server) AddNewPeer(addr string, stream uint32, permanent bool) error {
 	// XXX(oga) duplicate oneshots?
 	if permanent {
 		for p := range s.state.persistentPeers {
-			if p.addr.String() == addr {
+			if p.Addr().String() == addr {
 				return errors.New("peer already connected")
 			}
 		}
 	}
 	// TODO(oga) if too many, nuke a non-perm peer.
-	if !s.handleAddPeerMsg(newOutboundPeer(addr, s, stream, permanent, 0)) {
+	if !s.handleAddPeerMsg(NewOutboundPeer(addr, s, stream, permanent, 0)) {
 		return errors.New("failed to add peer")
 	}
 
@@ -276,7 +321,7 @@ func (s *server) listenHandler(listener peer.Listener) {
 		if err != nil {
 			continue
 		}
-		s.newPeers <- newInboundPeer(s, conn)
+		s.newPeers <- NewInboundPeer(s, conn)
 	}
 	s.wg.Done()
 }
@@ -366,8 +411,8 @@ func (s *server) peerHandler() {
 		// Shutdown the peer handler.
 		case <-s.quit:
 			// Shutdown peers.
-			s.state.forAllPeers(func(p *bmpeer) {
-				p.disconnect()
+			s.state.forAllPeers(func(p *peer.Peer) {
+				p.Disconnect()
 			})
 			s.addrManager.Stop()
 			s.objectManager.Stop()
@@ -389,7 +434,7 @@ func (s *server) peerHandler() {
 		// It would be good if we came up with a way of disconnecting a peer
 		// that we could guarantee was safe but I think that's a larger project.
 		case p := <-s.disconPeers:
-			p.disconnect()
+			p.Disconnect()
 
 		// Used by timers below to wake us back up.
 		case <-s.wakeup:
@@ -453,7 +498,7 @@ func (s *server) peerHandler() {
 			if s.handleAddPeerMsg(
 				// Stream number 1 is hard-coded in here. Will have to handle
 				// this more gracefully when we support streams.
-				newOutboundPeer(addrStr, s, 1, false, 0)) {
+				NewOutboundPeer(addrStr, s, 1, false, 0)) {
 			}
 		}
 
@@ -468,7 +513,7 @@ func (s *server) peerHandler() {
 }
 
 // BanPeer bans a peer that has already been connected to the server by ip.
-func (s *server) BanPeer(p *bmpeer) {
+func (s *server) BanPeer(p *peer.Peer) {
 	s.banPeers <- p
 }
 
@@ -770,16 +815,16 @@ func newServer(listenAddrs []string, db database.Db,
 		listeners:   listeners,
 		addrManager: amgr,
 		state:       newPeerState(cfg.MaxOutbound),
-		newPeers:    make(chan *bmpeer, cfg.MaxPeers),
-		donePeers:   make(chan *bmpeer, cfg.MaxPeers),
-		banPeers:    make(chan *bmpeer, cfg.MaxPeers),
-		disconPeers: make(chan *bmpeer, cfg.MaxPeers),
+		newPeers:    make(chan *peer.Peer, cfg.MaxPeers),
+		donePeers:   make(chan *peer.Peer, cfg.MaxPeers),
+		banPeers:    make(chan *peer.Peer, cfg.MaxPeers),
+		disconPeers: make(chan *peer.Peer, cfg.MaxPeers),
 		wakeup:      make(chan struct{}),
 		quit:        make(chan struct{}),
 		db:          db,
 		nat:         nat,
 	}
-	s.objectManager = newObjectManager(&s)
+	s.objectManager = objmgr.NewObjectManager(&s, s.db, cfg.RequestExpire, cfg.CleanupInterval)
 
 	if !cfg.DisableRPC {
 		s.rpcServer, err = newRPCServer(cfg.RPCListeners, &s)

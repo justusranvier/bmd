@@ -59,7 +59,7 @@ func (s *rpcServer) SendObject(ctx context.Context, in *pb.Object) (*pb.SendObje
 
 	// Relay object to object manager which will handle insertion and
 	// advertisement.
-	counter := s.server.objectManager.handleInsert(objMsg)
+	counter := s.server.objectManager.HandleInsert(objMsg)
 	if counter == 0 {
 		return nil, grpc.Errorf(codes.Internal, "failed to insert and advertise object")
 	}

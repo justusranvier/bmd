@@ -209,11 +209,18 @@ func (p *Peer) TstDisconnectWait(waitChan chan struct{}, startChan chan struct{}
 	// Wait for for a signal to continue.
 	<-waitChan
 
-	atomic.StoreInt32(&p.started, 0)
 	atomic.StoreInt32(&p.disconnect, 0)
+
+	// Only tell object manager we are gone if we ever told it we existed.
+	if p.HandshakeComplete() {
+		p.server.ObjectManager().DonePeer(p)
+	}
+
+	p.server.DonePeer(p)
 }
 
-//
+// TstStart allows us to start the peer with different timout settings so as
+// to test the connection timeout.
 func (p *Peer) TstStart(negotiateTimeoutSeconds, idleTimeoutMinutes uint) error {
 
 	// Already started?
@@ -222,7 +229,7 @@ func (p *Peer) TstStart(negotiateTimeoutSeconds, idleTimeoutMinutes uint) error 
 	}
 
 	if !p.conn.Connected() {
-		err := p.Connect()
+		err := p.connect()
 		if err != nil {
 			atomic.StoreInt32(&p.started, 0)
 			return err
@@ -233,5 +240,9 @@ func (p *Peer) TstStart(negotiateTimeoutSeconds, idleTimeoutMinutes uint) error 
 
 	// Start processing input and output.
 	go p.inHandler(negotiateTimeoutSeconds, idleTimeoutMinutes)
+
+	if !p.Inbound {
+		p.PushVersionMsg()
+	}
 	return nil
 }
