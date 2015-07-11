@@ -6,21 +6,19 @@ package main
 
 import (
 	"bytes"
-	"encoding/base64"
 	"net"
-	"sync/atomic"
 	"testing"
-	"time"
 
-	"github.com/cenkalti/rpc2"
-	"github.com/cenkalti/rpc2/jsonrpc"
-	"github.com/gorilla/websocket"
 	"github.com/monetas/bmd/peer"
+	pb "github.com/monetas/bmd/rpcproto"
 	"github.com/monetas/bmutil/wire"
+	"golang.org/x/net/context"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 )
 
 const (
-	rpcLoc = "ws://localhost:8442/"
+	rpcLoc = "localhost:8442"
 
 	rpcAdminUser = "admin"
 	rpcAdminPass = "admin"
@@ -31,81 +29,69 @@ const (
 
 var serv *server
 
-var subscribeArgs = &RPCSubscribeArgs{
-	FromCounter: 0,
+func rpcTests(t *testing.T) {
+	// Order of the tests is important. Do not change.
+	testRPCAuth(t)
+
+	// Set up a connection to the server.
+	conn, err := grpc.Dial(rpcLoc, grpc.WithPerRPCCredentials(pb.NewBasicAuthCredentials(rpcAdminUser, rpcAdminPass)))
+	if err != nil {
+		t.Fatalf("did not connect: %v", err)
+	}
+	defer conn.Close()
+	c := pb.NewBmdClient(conn)
+
+	testRPCSendObject(c, t)
+	testRPCGetObjects(c, t)
 }
 
-func rpcTests(client *rpc2.Client, t *testing.T) {
-	// Do not change test order. Tests depend on previous tests successfully
-	// finishing.
-	testRPCAuth(client, t)
-	testRPCSendObject(client, t)
-	testRPCSubscriptions(client, t)
+// testRPCAuth tests authentication failures for all RPC methods.
+func testRPCAuth(t *testing.T) {
+	// Try accessing methods with no credentials.
+	conn, err := grpc.Dial(rpcLoc)
+	if err != nil {
+		t.Fatalf("did not connect: %v", err)
+	}
+	c := pb.NewBmdClient(conn)
+
+	testRPCAuthFailure(c, t, codes.Unauthenticated)
+	conn.Close()
+
+	// Try accessing methods with invalid credentials.
+	conn, err = grpc.Dial(rpcLoc, grpc.WithPerRPCCredentials(pb.NewBasicAuthCredentials("blahblah", "blah blah")))
+	if err != nil {
+		t.Fatalf("did not connect: %v", err)
+	}
+	c = pb.NewBmdClient(conn)
+
+	testRPCAuthFailure(c, t, codes.PermissionDenied)
+	conn.Close()
 }
 
-// testRPCAuth tests authentication failures for all RPC methods and also
-// Authenticate method.
-func testRPCAuth(client *rpc2.Client, t *testing.T) {
-	// Test access denied.
-	failTests := []struct {
-		method string
-		args   interface{}
-	}{
-		{rpcHandleSendObject, "Y="},
-		{rpcHandleGetIdentity, "BM-asd5s"},
-		{rpcHandleSubscribeMessages, subscribeArgs},
-		{rpcHandleSubscribeBroadcasts, subscribeArgs},
-		{rpcHandleSubscribeGetpubkeys, subscribeArgs},
-		{rpcHandleSubscribePubkeys, subscribeArgs},
-		{rpcHandleSubscribeUnknownObjs, subscribeArgs},
+func testRPCAuthFailure(c pb.BmdClient, t *testing.T, expectedCode codes.Code) {
+	_, err := c.SendObject(context.Background(), &pb.Object{})
+	if grpc.Code(err) != expectedCode {
+		t.Errorf("Expected code %d, got unexpected error %v", expectedCode, err)
 	}
 
-	for _, test := range failTests {
-		err := client.Call(test.method, test.args, nil)
-		if err.Error() != errAccessDenied.Error() { // auth failure
-			t.Errorf("for %s expected %v got %v", test.method, errAccessDenied,
-				err)
-		}
+	_, err = c.GetIdentity(context.Background(), &pb.GetIdentityRequest{})
+	if grpc.Code(err) != expectedCode {
+		t.Errorf("Expected code %d, got unexpected error %v", expectedCode, err)
 	}
 
-	// Test Authenticate.
-	authTests := []struct {
-		username string
-		password string
-		success  bool
-	}{
-		{"", "", false},
-		{"sadsadadoijsad", "asdfsafafdfasdfdf", false},
-		{rpcLimitUser, rpcLimitPass, true},
-		{rpcAdminUser, rpcAdminPass, true},
+	stream, err := c.GetObjects(context.Background(), &pb.GetObjectsRequest{})
+	if err != nil {
+		t.Error(err)
 	}
 
-	for i, test := range authTests {
-		args := &RPCAuthArgs{
-			Username: test.username,
-			Password: test.password,
-		}
-		var res bool
-		err := client.Call(rpcHandleAuth, args, &res)
-
-		if err != nil {
-			t.Errorf("for case #%d got error %v", i, err)
-		}
-		if test.success != res {
-			t.Errorf("for case #%d expected %v got %v", i, test.success, res)
-		}
+	_, err = stream.Recv()
+	if grpc.Code(err) != expectedCode {
+		t.Errorf("Expected code %d, got unexpected error %v", expectedCode, err)
 	}
 }
 
 // Test SendObject.
-func testRPCSendObject(client *rpc2.Client, t *testing.T) {
-
-	// invalid base64 encoding
-	err := client.Call(rpcHandleSendObject, "aodisad093predikif", nil)
-	if err == nil {
-		t.Error("got no error for invalid base64 encoding")
-	}
-
+func testRPCSendObject(c pb.BmdClient, t *testing.T) {
 	errorTests := [][]byte{
 		[]byte{},                       // empty
 		[]byte{0x00, 0x00, 0x00, 0x00}, // invalid object
@@ -133,98 +119,70 @@ func testRPCSendObject(client *rpc2.Client, t *testing.T) {
 	}
 
 	for i, test := range errorTests {
-		err = client.Call(rpcHandleSendObject,
-			base64.StdEncoding.EncodeToString(test), nil)
-		if err == nil {
-			t.Errorf("for case #%d got no error", i)
+		_, err := c.SendObject(context.Background(), &pb.Object{Contents: test})
+		if grpc.Code(err) != codes.InvalidArgument {
+			t.Errorf("for case #%d got unexpected error %v", i, err)
 		}
 	}
 
 	// Insert valid object.
 	data := wire.EncodeMessage(testObj[0]) // getpubkey
-	err = client.Call(rpcHandleSendObject,
-		base64.StdEncoding.EncodeToString(data), nil)
+	ret, err := c.SendObject(context.Background(), &pb.Object{Contents: data})
 	if err != nil {
 		t.Errorf("for valid SendObject got error %v", err)
 	}
+	if 1 != ret.Counter {
+		t.Errorf("For counter expected %d got %d", 1, ret.Counter)
+	}
+
 	hash := toMsgObject(testObj[0]).InventoryHash()
 
 	// Check if advertised.
 	if ok, err := serv.objectManager.haveInventory(wire.NewInvVect(hash)); !ok {
 		t.Error("server doesn't have new object in inventory, error:", err)
 	}
+
+	// Try inserting object again.
+	_, err = c.SendObject(context.Background(), &pb.Object{Contents: data})
+	if grpc.Code(err) != codes.AlreadyExists {
+		t.Errorf("got unexpected error %v", err)
+	}
 }
 
-func testRPCSubscriptions(client *rpc2.Client, t *testing.T) {
-	// Test if old objects are sent OK when subscribing.
-	var received int32
-
+func testRPCGetObjects(c pb.BmdClient, t *testing.T) {
 	// Receive Getpubkey inserted in previous test.
-	client.Handle(rpcClientHandleGetpubkey, func(client *rpc2.Client,
-		args *RPCReceiveArgs, _ *struct{}) error {
-		b, err := base64.StdEncoding.DecodeString(args.Object)
-		if err != nil {
-			t.Fatal("invalid base64 encoding")
-		}
-		data := wire.EncodeMessage(testObj[0]) // getpubkey
-		if !bytes.Equal(data, b) {
-			t.Errorf("invalid getpubkey bytes, expected %v got %v", data, b)
-		}
-		t.Logf("Received getpubkey: counter=%d, byte length=%d\n", args.Counter,
-			len(b))
-		atomic.StoreInt32(&received, 1)
-		return nil
+	stream, err := c.GetObjects(context.Background(), &pb.GetObjectsRequest{
+		ObjectType:  pb.ObjectType_GETPUBKEY,
+		FromCounter: 1,
 	})
-
-	err := client.Call(rpcHandleSubscribeGetpubkeys, subscribeArgs, nil)
 	if err != nil {
-		t.Error("SubscribeGetpubkeys failed: ", err)
+		t.Fatal(err)
 	}
 
-	// Wait for received==1
-	timer := time.NewTimer(time.Millisecond * 20)
-	<-timer.C
+	objMsg, err := stream.Recv()
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	if atomic.LoadInt32(&received) != 1 {
-		t.Error("did not receive getpubkey from sendOldObjects")
+	data := wire.EncodeMessage(testObj[0]) // getpubkey
+	if !bytes.Equal(data, objMsg.Contents) {
+		t.Errorf("invalid getpubkey bytes, expected %v got %v", data, objMsg.Contents)
 	}
 
 	// Test if objects inserted after subscribing are handled correctly.
-	atomic.StoreInt32(&received, 0)
-	data := wire.EncodeMessage(testObj[2]) // pubkey
-
-	client.Handle(rpcClientHandlePubkey, func(client *rpc2.Client,
-		args *RPCReceiveArgs, _ *struct{}) error {
-		b, err := base64.StdEncoding.DecodeString(args.Object)
-		if err != nil {
-			t.Fatal("invalid base64 encoding")
-		}
-		if !bytes.Equal(data, b) {
-			t.Errorf("invalid pubkey bytes, expected %v got %v", data, b)
-		}
-		t.Logf("Received pubkey: counter=%d, byte length=%d\n", args.Counter,
-			len(b))
-		atomic.StoreInt32(&received, 1)
-		return nil
-	})
-
-	err = client.Call(rpcHandleSubscribePubkeys, subscribeArgs, nil)
-	if err != nil {
-		t.Error("SubscribePubkeys failed: ", err)
-	}
-
-	err = client.Call(rpcHandleSendObject,
-		base64.StdEncoding.EncodeToString(data), nil)
+	data = wire.EncodeMessage(testObj[1]) // getpubkey
+	_, err = c.SendObject(context.Background(), &pb.Object{Contents: data})
 	if err != nil {
 		t.Errorf("for valid SendObject got error %v", err)
 	}
 
-	timer.Reset(time.Millisecond * 20)
-	<-timer.C
-	timer.Stop()
+	objMsg, err = stream.Recv()
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	if atomic.LoadInt32(&received) != 1 {
-		t.Error("did not receive pubkey from handleSubscribe")
+	if !bytes.Equal(data, objMsg.Contents) {
+		t.Errorf("invalid getpubkey bytes, expected %v got %v", data, objMsg.Contents)
 	}
 }
 
@@ -258,59 +216,10 @@ func TestRPCConnection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Server creation failed: %s", err)
 	}
-
 	serv.Start()
 
-	ws, _, err := websocket.DefaultDialer.Dial(rpcLoc, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	client := rpc2.NewClientWithCodec(jsonrpc.NewJSONCodec(ws.UnderlyingConn()))
-
-	go client.Run()
-
-	rpcTests(client, t)
-	client.Close() // we're done
-	ws.Close()
-
-	// Let server register disconnection
-	<-time.NewTimer(time.Millisecond * 20).C
-
-	// Test for authentication timeout.
-	ws, _, err = websocket.DefaultDialer.Dial(rpcLoc, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	client = rpc2.NewClientWithCodec(jsonrpc.NewJSONCodec(ws.UnderlyingConn()))
-	go client.Run()
-
-	// wait, give 10ms wiggling room
-	<-time.NewTimer(time.Second*rpcAuthTimeoutSeconds + time.Millisecond*10).C
-
-	select {
-	case <-client.DisconnectNotify():
-	// do nothing
-	default:
-		t.Error("did not disconnect due to auth timeout")
-	}
-
-	// Test for RPCMaxClients
-	ws, _, err = websocket.DefaultDialer.Dial(rpcLoc, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// If two connections take place at a close enough time together, it can
-	// happen that the second connection is accepted before the connection count
-	// has been updated after the previous connection. Thus, we wait a tiny amount
-	// to make sure the count is updated. This could probably be fixed eventually.
-	time.Sleep(20 * time.Millisecond)
-
-	_, _, err = websocket.DefaultDialer.Dial(rpcLoc, nil)
-	if err == nil {
-		t.Error("RPCMaxClients isn't enforced. Second connection was successful.")
-	}
+	// Run the actual tests.
+	rpcTests(t)
 
 	// Cleanup.
 	serv.Stop()

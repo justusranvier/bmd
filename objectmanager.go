@@ -22,9 +22,6 @@ import (
 )
 
 const (
-	// objectManagerQueueSize specifies the size of object manager msgChan.
-	objectManagerQueueSize = 50
-
 	// objectDbNamePrefix is the prefix for the object database name. The
 	// database type is appended to this value to form the full object database
 	// name.
@@ -109,7 +106,6 @@ type ObjectManager struct {
 	// The set of objects which have been assigned to peers for download.
 	requested map[wire.InvVect]*peerRequest
 
-	relayInvChan chan *wire.InvVect
 	relayInvList *list.List
 	msgChan      chan interface{}
 	wg           sync.WaitGroup
@@ -213,7 +209,7 @@ func (om *ObjectManager) handleInsert(obj *wire.MsgObject) uint64 {
 
 	// Notify RPC server
 	if !cfg.DisableRPC {
-		om.server.rpcServer.NotifyObject(obj, counter)
+		om.server.rpcServer.NotifyObject(obj.ObjectType)
 	}
 
 	// Advertise objects to other peers.
@@ -651,7 +647,6 @@ func newObjectManager(s *server) *ObjectManager {
 		unknown:      make(map[wire.InvVect]time.Time),
 		msgChan:      make(chan interface{}),
 		quit:         make(chan struct{}),
-		relayInvChan: make(chan *wire.InvVect, objectManagerQueueSize),
 		peers:        make(map[*bmpeer]struct{}),
 		working:      make(map[*bmpeer]struct{}),
 		relayInvList: list.New(),
