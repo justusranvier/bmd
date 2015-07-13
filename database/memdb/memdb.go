@@ -159,9 +159,6 @@ func (db *MemDb) fetchObjectByHash(hash *wire.ShaHash) (*wire.MsgObject, error) 
 // FetchObjectByHash returns an object from the database as a byte array.
 // It is upto the implementation to decode the byte array. This is part of the
 // database.Db interface implementation.
-//
-// This implementation does not use any additional cache since the entire
-// database is already in memory.
 func (db *MemDb) FetchObjectByHash(hash *wire.ShaHash) (*wire.MsgObject, error) {
 	db.RLock()
 	defer db.RUnlock()
@@ -177,9 +174,6 @@ func (db *MemDb) FetchObjectByHash(hash *wire.ShaHash) (*wire.MsgObject, error) 
 // based on the object type and counter value. The implementation may cache the
 // underlying data if desired. This is part of the database.Db interface
 // implementation.
-//
-// This implementation does not use any additional cache since the entire
-// database is already in memory.
 func (db *MemDb) FetchObjectByCounter(objType wire.ObjectType,
 	counter uint64) (*wire.MsgObject, error) {
 	db.RLock()
@@ -197,17 +191,12 @@ func (db *MemDb) FetchObjectByCounter(objType wire.ObjectType,
 	return obj, nil
 }
 
-// FetchObjectsFromCounter returns a map of `count' objects which have a
-// counter position starting from `counter'. Key is the value of counter and
-// value is a byte slice containing the object. It also returns the counter
-// value of the last object, which could be useful for more queries to the
-// function. The implementation may cache the underlying data if desired.
+// FetchObjectsFromCounter returns a slice of `count' objects which have a
+// counter position starting from `counter'. It also returns the counter value
+// of the last object, which could be useful for more queries to the function.
 // This is part of the database.Db interface implementation.
-//
-// This implementation does not use any additional cache since the entire
-// database is already in memory.
 func (db *MemDb) FetchObjectsFromCounter(objType wire.ObjectType, counter uint64,
-	count uint64) (map[uint64]*wire.MsgObject, uint64, error) {
+	count uint64) ([]database.ObjectWithCounter, uint64, error) {
 	db.RLock()
 	defer db.RUnlock()
 	if db.closed {
@@ -238,13 +227,14 @@ func (db *MemDb) FetchObjectsFromCounter(objType wire.ObjectType, counter uint64
 		newCounter = keys[count-1] // Get counter'th element
 		keys = keys[:count]        // we don't need excess elements
 	}
-	objects := make(map[uint64]*wire.MsgObject)
+	objects := make([]database.ObjectWithCounter, 0, len(keys))
 
 	// start fetching objects in ascending order
 	for _, v := range keys {
 		hash := counterMap.ByCounter[v]
 		obj, _ := db.fetchObjectByHash(hash)
-		objects[v] = obj.Copy()
+
+		objects = append(objects, database.ObjectWithCounter{Counter: v, Object: obj.Copy()})
 	}
 
 	return objects, newCounter, nil

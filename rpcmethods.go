@@ -137,10 +137,10 @@ func (s *rpcServer) GetObjects(in *pb.GetObjectsRequest, stream pb.Bmd_GetObject
 		fromCounter = lastCount + 1
 
 		// Send objects to client.
-		for counter, msg := range objs {
+		for _, obj := range objs {
 			out := &pb.Object{
-				Contents: wire.EncodeMessage(msg),
-				Counter:  counter,
+				Contents: wire.EncodeMessage(obj.Object),
+				Counter:  obj.Counter,
 			}
 			err = stream.Send(out)
 			if err != nil {

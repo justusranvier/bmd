@@ -25,6 +25,13 @@ var (
 	ErrNonexistentObject = errors.New("object doesn't exist in database")
 )
 
+// ObjectWithCounter is a struct to couple an object message with its counter
+// value. It's returned by FetchObjectsFromCounter.
+type ObjectWithCounter struct {
+	Counter uint64
+	Object  *wire.MsgObject
+}
+
 // Db defines a generic interface that is used to request and insert data into
 // the database. This interface is intended to be agnostic to actual mechanism
 // used for backend data storage. The AddDBDriver function can be used to add a
@@ -48,13 +55,12 @@ type Db interface {
 	// check.
 	FetchObjectByCounter(wire.ObjectType, uint64) (*wire.MsgObject, error)
 
-	// FetchObjectsFromCounter returns a map of `count' objects which have a
-	// counter position starting from `counter'. Key is the value of counter and
-	// value is a byte slice containing the object. It also returns the counter
+	// FetchObjectsFromCounter returns a slice of `count' objects which have a
+	// counter position starting from `counter'. It also returns the counter
 	// value of the last object, which could be useful for more queries to the
 	// function.
 	FetchObjectsFromCounter(objType wire.ObjectType, counter uint64,
-		count uint64) (map[uint64]*wire.MsgObject, uint64, error)
+		count uint64) ([]ObjectWithCounter, uint64, error)
 
 	// FetchIdentityByAddress returns identity.Public stored in the form
 	// of a PubKey message in the pubkey database.
