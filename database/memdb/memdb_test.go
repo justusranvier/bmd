@@ -18,23 +18,15 @@ import (
 // TestClosed ensures that the correct errors are returend when the public
 // functions are called on a closed database.
 func TestClosed(t *testing.T) {
-	db, err := database.CreateDB("memdb")
+	db, err := database.OpenDB("memdb")
 	if err != nil {
 		t.Fatalf("Failed to open test database %v", err)
 	}
 
 	db.Close()
 
-	if err := db.Sync(); err != database.ErrDbClosed {
-		t.Errorf("Sync: unexpected error %v", err)
-	}
-
 	if err := db.Close(); err != database.ErrDbClosed {
 		t.Errorf("Close: unexpected error %v", err)
-	}
-
-	if err := db.RollbackClose(); err != database.ErrDbClosed {
-		t.Errorf("RollbackClose: unexpected error %v", err)
 	}
 
 	if _, err := db.InsertObject(nil); err != database.ErrDbClosed {
@@ -88,11 +80,7 @@ func TestClosed(t *testing.T) {
 		t.Errorf("FetchIdentityByAddress: unexpected error %v", err)
 	}
 
-	if _, err := db.FilterObjects(nil); err != database.ErrDbClosed {
-		t.Errorf("FilterObjects: unexpected error %v", err)
-	}
-
-	if _, err := db.FetchRandomInvHashes(0, nil); err != database.ErrDbClosed {
+	if _, err := db.FetchRandomInvHashes(0); err != database.ErrDbClosed {
 		t.Errorf("FetchRandomInvHashes: unexpected error %v", err)
 	}
 }

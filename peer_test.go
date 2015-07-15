@@ -40,7 +40,7 @@ func resetCfg(cfg *config) func() {
 }
 
 func getMemDb(msgs []*wire.MsgObject) database.Db {
-	db, err := database.CreateDB("memdb")
+	db, err := database.OpenDB("memdb")
 	if err != nil {
 		return nil
 	}

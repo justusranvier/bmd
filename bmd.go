@@ -83,12 +83,6 @@ func bmdMain() error {
 	}
 	defer db.Close()
 
-	// Ensure the database is sync'd and closed on Ctrl+C.
-	addInterruptHandler(func() {
-		bmdLog.Infof("Gracefully shutting down the database...")
-		db.RollbackClose()
-	})
-
 	// Create server and start it.
 	server, err := newDefaultServer(cfg.Listeners, db)
 	if err != nil {
@@ -144,71 +138,23 @@ func objectDbPath(dbType string) string {
 	return dbPath
 }
 
-// warnMultipeDBs shows a warning if multiple database types are detected.
-// This is not a situation most users want.  It is handy for development however
-// to support multiple side-by-side databases.
-func warnMultipeDBs(dbType string) {
-	// This is intentionally not using the known db types which depend
-	// on the database types compiled into the binary since we want to
-	// detect legacy db types as well.
-	dbTypes := []string{"leveldb", "sqlite"}
-	duplicateDbPaths := make([]string, 0, len(dbTypes)-1)
-	for _, dbt := range dbTypes {
-		if dbt == dbType {
-			continue
-		}
-
-		// Store db path as a duplicate db if it exists.
-		/*dbPath := blockDbPath(dbType)
-		if fileExists(dbPath) {
-			duplicateDbPaths = append(duplicateDbPaths, dbPath)
-		}*/
-	}
-
-	// Warn if there are extra databases.
-	if len(duplicateDbPaths) > 0 {
-		// TODO
-	}
-}
-
 // setupDB loads (or creates when needed) the object database taking into
-// account the selected database backend. It also contains additional logic
-// such warning the user if there are multiple databases which consume space on
-// the file system.
+// account the selected database backend.
 func setupDB(dbType, dbPath string) (database.Db, error) {
 	// The memdb backend does not have a file path associated with it, so
-	// handle it uniquely.  We also don't want to worry about the multiple
-	// database type warnings when running with the memory database.
+	// handle it uniquely.
 	if dbType == "memdb" {
-		db, err := database.CreateDB(dbType)
-		if err != nil {
-			return nil, err
-		}
-		return db, nil
+		return database.OpenDB(dbType)
 	}
-
-	warnMultipeDBs(dbType)
-
-	// The database name is based on the database type.
-	//dbPath := blockDbPath(dbType)
-
 	db, err := database.OpenDB(dbType, dbPath)
 	if err != nil {
-		// Return the error if it's not because the database
-		// doesn't exist.
-		if err != database.ErrDbDoesNotExist {
-			return nil, err
-		}
+		return nil, err
+	}
 
-		// Create the db if it does not exist.
-		/*err = os.MkdirAll(cfg.DataDir, 0700)
-		if err != nil {
-			return nil, err
-		}*/
-		db, err = database.CreateDB(dbType, dbPath)
-		if err != nil {
-			return nil, err
-		}
+	// Remove all expired objects.
+	_, err = db.RemoveExpiredObjects()
+	if err != nil {
+		return nil, err
 	}
 
 	return db, nil

@@ -31,7 +31,7 @@ type testContext struct {
 // function
 func (tc *testContext) newDb() func() {
 	// create fresh database
-	db, teardown, err := createDB(tc.dbType, "test", true)
+	db, teardown, err := createDB(tc.dbType)
 	if err != nil {
 		tc.t.Fatalf("Failed to create test database (%s) %v", tc.dbType, err)
 	}
@@ -128,16 +128,6 @@ var testObj = [][]wire.Message{
 		wire.NewMsgUnknownObject(7288, expires, wire.ObjectType(5), 1, 1, []byte{0, 0, 0, 0, 1, 0, 0}),
 		wire.NewMsgUnknownObject(7288, expired, wire.ObjectType(5), 1, 1, []byte{0, 0, 0, 0, 0, 0, 0, 99, 98, 97}),
 	},
-}
-
-func testSync(tc *testContext) {
-	teardown := tc.newDb()
-	defer teardown()
-
-	err := tc.db.Sync()
-	if err != nil {
-		tc.t.Errorf("Sync (%s): got error %v", tc.dbType, err)
-	}
 }
 
 // testObject tests InsertObject, ExistsObject, FetchObjectByHash, and RemoveObject
@@ -647,80 +637,27 @@ func testFilters(tc *testContext) {
 		}
 	}
 
-	allFilter := func(*wire.ShaHash, *wire.MsgObject) bool {
-		return true
-	}
-	noneFilter := func(*wire.ShaHash, *wire.MsgObject) bool {
-		return false
-	}
-	unknownObjFilter := func(hash *wire.ShaHash, msg *wire.MsgObject) bool {
-		if msg.ObjectType >= wire.ObjectType(4) {
-			return true
-		} else {
-			return false
-		}
-	}
-	expiredFilter := func(hash *wire.ShaHash, msg *wire.MsgObject) bool {
-		if time.Now().Add(-time.Hour * 3).After(msg.ExpiresTime) { // expired
-			return true
-		} else {
-			return false
-		}
-	}
-
 	type randomInvHashesTest struct {
 		count         uint64
-		filterFunc    func(*wire.ShaHash, *wire.MsgObject) bool
 		expectedCount int
 	}
 
 	randomInvHashesTests := []randomInvHashesTest{
-		{2, allFilter, 2},
-		{15, allFilter, 12},
-		{5, noneFilter, 0},
-		{0, noneFilter, 0},
-		{8, unknownObjFilter, 4},
-		{1, unknownObjFilter, 1},
-		{7, expiredFilter, 6},
-		{5, expiredFilter, 5},
+		{2, 2},
+		{15, 12},
 	}
 
 	for i, tst := range randomInvHashesTests {
-		hashes, err := tc.db.FetchRandomInvHashes(tst.count, tst.filterFunc)
+		hashes, err := tc.db.FetchRandomInvHashes(tst.count)
 		if err != nil {
 			tc.t.Fatalf("FetchRandomInvHashes (%s): test #%d, got error %v",
 				tc.dbType, i, err)
 		}
-		if len(hashes) != tst.expectedCount {
+		if len(hashes) > tst.expectedCount {
 			tc.t.Errorf("FetchRandomInvHashes (%s): test #%d, got length %d"+
 				" expected %d", tc.dbType, i, len(hashes), tst.expectedCount)
 		}
 	}
-
-	type filterObjectsTest struct {
-		filterFunc    func(*wire.ShaHash, *wire.MsgObject) bool
-		expectedCount int
-	}
-
-	filterObjectsTests := []filterObjectsTest{
-		{allFilter, 12},
-		{noneFilter, 0},
-		{unknownObjFilter, 4},
-		{expiredFilter, 6},
-	}
-
-	for i, tst := range filterObjectsTests {
-		hashes, err := tc.db.FilterObjects(tst.filterFunc)
-		if err != nil {
-			tc.t.Fatalf("FilterObjects (%s): test #%d, got error %v",
-				tc.dbType, i, err)
-		}
-		if len(hashes) != tst.expectedCount {
-			tc.t.Errorf("FilterObjects (%s): test #%d, got length %d"+
-				" expected %d", tc.dbType, i, len(hashes), tst.expectedCount)
-		}
-	}
-
 }
 
 func testRemoveExpiredObjects(tc *testContext) {
@@ -772,5 +709,4 @@ func testInterface(t *testing.T, dbType string) {
 	testRemoveExpiredObjects(context)
 	testCounter(context)
 	testFilters(context)
-	testSync(context)
 }

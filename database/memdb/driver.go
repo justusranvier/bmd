@@ -17,7 +17,7 @@ import (
 var log = btclog.Disabled
 
 func init() {
-	driver := database.DriverDB{DbType: "memdb", CreateDB: CreateDB, OpenDB: OpenDB}
+	driver := database.DriverDB{DbType: "memdb", OpenDB: OpenDB}
 	database.AddDBDriver(driver)
 }
 
@@ -31,22 +31,13 @@ func parseArgs(funcName string, args ...interface{}) error {
 	return nil
 }
 
-// OpenDB opens an existing database for use.
+// OpenDB opens a database, initializing it if necessary.
 func OpenDB(args ...interface{}) (database.Db, error) {
 	if err := parseArgs("OpenDB", args...); err != nil {
 		return nil, err
 	}
 
-	// A memory database is not persistent, so let CreateDB handle it.
-	return CreateDB()
-}
-
-// CreateDB creates, initializes, and opens a database for use.
-func CreateDB(args ...interface{}) (database.Db, error) {
-	if err := parseArgs("CreateDB", args...); err != nil {
-		return nil, err
-	}
-
 	log = database.GetLog()
+
 	return newMemDb(), nil
 }

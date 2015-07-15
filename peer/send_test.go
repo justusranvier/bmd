@@ -21,7 +21,7 @@ var mockAddr net.Addr = &net.TCPAddr{IP: net.ParseIP("192.168.0.1"), Port: 8333}
 
 func TestSendStartStop(t *testing.T) {
 	conn := NewMockConnection(mockAddr, true, false)
-	db, _ := database.CreateDB("memdb")
+	db, _ := database.OpenDB("memdb")
 
 	queue := peer.NewSend(peer.NewInventory(), db)
 
@@ -76,7 +76,7 @@ func TestSendStartStop(t *testing.T) {
 
 func TestSendMessage(t *testing.T) {
 	conn := NewMockConnection(mockAddr, true, false)
-	db, _ := database.CreateDB("memdb")
+	db, _ := database.OpenDB("memdb")
 	var err error
 
 	queue := peer.NewSend(peer.NewInventory(), db)
@@ -126,7 +126,7 @@ func TestSendMessage(t *testing.T) {
 
 func TestRequestData(t *testing.T) {
 	conn := NewMockConnection(mockAddr, true, false)
-	db, _ := database.CreateDB("memdb")
+	db, _ := database.OpenDB("memdb")
 
 	var err error
 
@@ -195,7 +195,7 @@ func TestQueueInv(t *testing.T) {
 	timer.C = timerChan // Make the ticker into something I control.
 
 	conn := NewMockConnection(mockAddr, true, false)
-	db, _ := database.CreateDB("memdb")
+	db, _ := database.OpenDB("memdb")
 
 	var err error
 	queue := peer.NewSend(peer.NewInventory(), db)
@@ -303,7 +303,7 @@ func TestQueueInv(t *testing.T) {
 }
 
 func TestRetrieveObject(t *testing.T) {
-	db, _ := database.CreateDB("memdb")
+	db, _ := database.OpenDB("memdb")
 
 	// An object that is not in the database.
 	notThere := &wire.InvVect{Hash: *randomShaHash()}

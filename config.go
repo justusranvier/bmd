@@ -22,6 +22,7 @@ import (
 	"github.com/btcsuite/go-socks/socks"
 	flags "github.com/jessevdk/go-flags"
 	"github.com/monetas/bmd/database"
+	_ "github.com/monetas/bmd/database/bdb"
 	_ "github.com/monetas/bmd/database/memdb"
 )
 
@@ -33,7 +34,7 @@ const (
 	defaultMaxPeers        = 125
 	defaultBanDuration     = time.Hour * 24
 	defaultMaxRPCClients   = 25
-	defaultDbType          = "memdb"
+	defaultDbType          = "boltdb"
 	defaultPort            = 8444
 	defaultRPCPort         = 8442
 	defaultMaxUpPerPeer    = 2 * 1024 * 1024 // 2MBps
@@ -136,7 +137,7 @@ type config struct {
 	OnionProxyPass  string        `long:"onionpass" default-mask:"-" description:"Password for onion proxy server"`
 	NoOnion         bool          `long:"noonion" description:"Disable connecting to tor hidden services"`
 	TorIsolation    bool          `long:"torisolation" description:"Enable Tor stream isolation by randomizing user credentials for each connection."`
-	DbType          string        `long:"dbtype" description:"Database backend to use"`
+	DbType          string        `long:"dbtype" description:"Database backend to use. Options: {memdb (for testing), boltdb}"`
 	Profile         string        `long:"profile" description:"Enable HTTP profiling on given port -- NOTE port must be between 1024 and 65536"`
 	CPUProfile      string        `long:"cpuprofile" description:"Write CPU profile to the specified file"`
 	DebugLevel      string        `short:"d" long:"debuglevel" description:"Logging level for all subsystems {trace, debug, info, warn, error, critical} -- You may also specify <subsystem>=<level>,<subsystem2>=<level>,... to set the log level for individual subsystems -- Use show to list available subsystems"`
