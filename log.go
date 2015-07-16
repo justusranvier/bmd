@@ -16,6 +16,7 @@ import (
 	"github.com/btcsuite/seelog"
 	"github.com/monetas/bmd/addrmgr"
 	"github.com/monetas/bmd/database"
+	"github.com/monetas/bmd/objmgr"
 	"github.com/monetas/bmd/peer"
 	"github.com/monetas/bmutil/wire"
 )
@@ -101,6 +102,7 @@ func useLogger(subsystemID string, logger btclog.Logger) {
 
 	case "OBJMGR":
 		objmgrLog = logger
+		objmgr.UseLogger(logger)
 	}
 }
 

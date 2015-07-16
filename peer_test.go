@@ -39,32 +39,6 @@ func resetCfg(cfg *config) func() {
 	}
 }
 
-// tstNewPeerHandshakeComplete creates a new peer object that has already nearly
-// completed its initial handshake. You just need to send it a ver ack and it will
-// run as if that was the last step necessary. It comes already running.
-func tstNewPeerHandshakeComplete(s *server, conn peer.Connection, inventory *peer.Inventory, send peer.Send, na *wire.NetAddress) *bmpeer {
-	logic := &bmpeer{
-		server:          s,
-		protocolVersion: maxProtocolVersion,
-		bmnet:           wire.MainNet,
-		services:        wire.SFNodeNetwork,
-		inbound:         true,
-		inventory:       inventory,
-		send:            send,
-		addr:            conn.RemoteAddr(),
-		versionSent:     true,
-		versionKnown:    true,
-		userAgent:       wire.DefaultUserAgent,
-		na:              na,
-	}
-
-	p := peer.NewPeer(logic, conn, send)
-
-	logic.peer = p
-
-	return logic
-}
-
 func getMemDb(msgs []*wire.MsgObject) database.Db {
 	db, err := database.CreateDB("memdb")
 	if err != nil {
@@ -177,6 +151,7 @@ func init() {
 	}
 	cfg.MaxPeers = 1
 	cfg.DisableDNSSeed = true
+	cfg.DebugLevel = "trace"
 }
 
 // TestOutboundPeerHandshake tests the initial handshake for an outbound peer, ie,
@@ -514,9 +489,11 @@ func TestProcessInvAndObjectExchange(t *testing.T) {
 	TooLongInv := &wire.MsgInv{InvList: tooLongInvVect}
 
 	tests := []struct {
-		peerDB    []*wire.MsgObject // The messages already in the peer's db.
-		mockDB    []*wire.MsgObject // The messages that are already in the
-		invAction *PeerAction       // Action for the mock peer to take upon receiving an inv.
+		peerDB []*wire.MsgObject // The messages already in the peer's db.
+		mockDB []*wire.MsgObject // The messages that are already in the
+		// Action for the mock peer to take upon receiving an inv. If this is
+		// nil, then an appropriate action is constructed.
+		invAction *PeerAction
 	}{
 		{ // Nobody has any inv in this test case!
 			[]*wire.MsgObject{},
@@ -577,8 +554,12 @@ func TestProcessInvAndObjectExchange(t *testing.T) {
 	localAddr := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 8333}
 	remoteAddr := &net.TCPAddr{IP: net.ParseIP("192.168.0.1"), Port: 8333}
 
+	addrout, _ := wire.NewNetAddress(remoteAddr, 1, 0)
+
 	for testCase, test := range tests {
 		defer resetCfg(cfg)()
+
+		t.Log("Test case", testCase)
 		// Define the objects that will go in the database.
 		// Create server and start it.
 		listeners := []string{net.JoinHostPort("", "8445")}
@@ -596,8 +577,8 @@ func TestProcessInvAndObjectExchange(t *testing.T) {
 			NewDataExchangePeerTester(test.mockDB, test.peerDB, test.invAction))
 		mockSend := NewMockSend(mockConn)
 		inventory := peer.NewInventory()
-		na, _ := wire.NewNetAddress(remoteAddr, 1, 0)
-		serv.handleAddPeerMsg(tstNewPeerHandshakeComplete(serv, mockConn, inventory, mockSend, na))
+		serv.handleAddPeerMsg(peer.NewPeerHandshakeComplete(
+			serv, mockConn, inventory, mockSend, addrout))
 
 		var msg TestReport
 		msg = <-report
