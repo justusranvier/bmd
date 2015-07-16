@@ -630,13 +630,12 @@ func (p *Peer) handleInitialConnection() {
 	p.PushAddrMsg(p.server.AddrManager().AddressCache())
 
 	// Send a big inv message.
-	hashes, _ := p.server.Db().FetchRandomInvHashes(wire.MaxInvPerMsg,
-		func(*wire.ShaHash, *wire.MsgObject) bool { return true })
-	invVectList := make([]*wire.InvVect, len(hashes))
-	for i, hash := range hashes {
-		invVectList[i] = &wire.InvVect{Hash: hash}
+	hashes, err := p.server.Db().FetchRandomInvHashes(wire.MaxInvPerMsg)
+	if err != nil {
+		log.Errorf("FetchRandomInvHashes failed: %v", err)
+		return
 	}
-	p.PushInvMsg(invVectList)
+	p.PushInvMsg(hashes)
 	log.Debug(p.PrependAddr("Handshake complete."))
 }
 

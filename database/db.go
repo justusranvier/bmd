@@ -44,8 +44,7 @@ type Db interface {
 	// hash exists in the database.
 	ExistsObject(*wire.ShaHash) (bool, error)
 
-	// FetchObjectByHash returns an object from the database as a byte array.
-	// It is upto the implementation to decode the byte array.
+	// FetchObjectByHash returns an object from the database as a wire.MsgObject.
 	FetchObjectByHash(*wire.ShaHash) (*wire.MsgObject, error)
 
 	// FetchObjectByCounter returns the corresponding object based on the
@@ -66,27 +65,10 @@ type Db interface {
 	// of a PubKey message in the pubkey database.
 	FetchIdentityByAddress(*bmutil.Address) (*identity.Public, error)
 
-	// FilterObjects returns a map of objects that return true when passed to
-	// the filter function. It could be used for grabbing objects of a certain
-	// type, like getpubkey requests. This is an expensive operation as it
-	// copies data corresponding to anything that matches the filter. Use
-	// sparingly and ensure that only a few objects can match.
-	//
-	// WARNING: filter must not mutate the object and/or its inventory hash.
-	FilterObjects(func(hash *wire.ShaHash,
-		obj *wire.MsgObject) bool) (map[wire.ShaHash]*wire.MsgObject, error)
-
 	// FetchRandomInvHashes returns the specified number of inventory hashes
-	// corresponding to random unexpired objects from the database and filtering
-	// them by calling filter(invHash, objectMsg) on each object. A return
-	// value of true from filter means that the object would be returned.
-	//
-	// Useful for creating inv message, with filter being used to filter out
-	// inventory hashes that have already been sent out to a particular node.
-	//
-	// WARNING: filter must not mutate the object and/or its inventory hash.
-	FetchRandomInvHashes(count uint64,
-		filter func(*wire.ShaHash, *wire.MsgObject) bool) ([]wire.ShaHash, error)
+	// corresponding to random unexpired objects from the database. It does not
+	// guarantee that the number of returned inventory vectors would be `count'.
+	FetchRandomInvHashes(count uint64) ([]*wire.InvVect, error)
 
 	// GetCounter returns the highest value of counter that exists for objects
 	// of the given type.
@@ -121,22 +103,13 @@ type Db interface {
 	// identities. Note that it doesn't touch the general object store and won't
 	// remove the public key object from there.
 	RemovePublicIdentity(*bmutil.Address) error
-
-	// RollbackClose discards the recent database changes to the previously
-	// saved data at last Sync and closes the database.
-	RollbackClose() (err error)
-
-	// Sync verifies that the database is coherent on disk and no
-	// outstanding transactions are in flight.
-	Sync() (err error)
 }
 
 // DriverDB defines a structure for backend drivers to use when they registered
 // themselves as a backend which implements the Db interface.
 type DriverDB struct {
-	DbType   string
-	CreateDB func(args ...interface{}) (pbdb Db, err error)
-	OpenDB   func(args ...interface{}) (pbdb Db, err error)
+	DbType string
+	OpenDB func(args ...interface{}) (pbdb Db, err error)
 }
 
 // driverList holds all of the registered database backends.
@@ -152,17 +125,7 @@ func AddDBDriver(instance DriverDB) {
 	driverList = append(driverList, instance)
 }
 
-// CreateDB intializes and opens a database.
-func CreateDB(dbtype string, args ...interface{}) (pbdb Db, err error) {
-	for _, drv := range driverList {
-		if drv.DbType == dbtype {
-			return drv.CreateDB(args...)
-		}
-	}
-	return nil, ErrDbUnknownType
-}
-
-// OpenDB opens an existing database.
+// OpenDB opens a database, initializing it if necessary.
 func OpenDB(dbtype string, args ...interface{}) (pbdb Db, err error) {
 	for _, drv := range driverList {
 		if drv.DbType == dbtype {

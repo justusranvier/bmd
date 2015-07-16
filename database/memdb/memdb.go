@@ -20,7 +20,7 @@ import (
 	"github.com/monetas/bmutil/wire"
 )
 
-// expiredSliceSize is the initialized length of the slice that holds hashes of
+// expiredSliceSize is the initial capacity of the slice that holds hashes of
 // expired objects returned by RemoveExpiredObjects.
 const expiredSliceSize = 50
 
@@ -156,9 +156,7 @@ func (db *MemDb) fetchObjectByHash(hash *wire.ShaHash) (*wire.MsgObject, error) 
 	return nil, database.ErrNonexistentObject
 }
 
-// FetchObjectByHash returns an object from the database as a byte array.
-// It is upto the implementation to decode the byte array. This is part of the
-// database.Db interface implementation.
+// FetchObjectByHash returns an object from the database as a wire.MsgObject.
 func (db *MemDb) FetchObjectByHash(hash *wire.ShaHash) (*wire.MsgObject, error) {
 	db.RLock()
 	defer db.RUnlock()
@@ -276,74 +274,41 @@ func (db *MemDb) FetchIdentityByAddress(addr *bmutil.Address) (*identity.Public,
 	}
 
 	// Try finding the public key with the required tag and then decrypting it.
-	addrTag := addr.Tag()
-	for tag, msg := range db.encryptedPubKeyByTag {
-		if bytes.Equal(msg.Tag[:], addrTag) { // decrypt this key
-			err := cipher.TryDecryptAndVerifyPubKey(msg, addr)
-			if err != nil {
-				return nil, err
-			}
+	var tag wire.ShaHash
+	copy(tag[:], addr.Tag())
 
-			// Successful decryption and signature verification.
-			signKey, _ := msg.SigningKey.ToBtcec()
-			encKey, _ := msg.EncryptionKey.ToBtcec()
-
-			// Add public key to database.
-			id = identity.NewPublic(signKey, encKey,
-				msg.NonceTrials, msg.ExtraBytes, msg.Version, msg.StreamNumber)
-			db.pubIDByAddress[addrStr] = id
-
-			// Delete from map of encrypted pubkeys.
-			delete(db.encryptedPubKeyByTag, tag)
-
-			return id, nil
-		}
+	// Find pubkey to decrypt.
+	msg, ok := db.encryptedPubKeyByTag[tag]
+	if !ok {
+		return nil, database.ErrNonexistentObject
 	}
 
-	return nil, database.ErrNonexistentObject
-}
-
-// FilterObjects returns a map of objects that return true when passed to
-// the filter function. It could be used for grabbing objects of a certain
-// type, like getpubkey requests. This is an expensive operation as it
-// copies data corresponding to anything that matches the filter. Use
-// sparingly and ensure that only a few objects can match.
-//
-// WARNING: filter must not mutate the object and/or its inventory hash.
-//
-// This is part of the database.Db interface implementation.
-func (db *MemDb) FilterObjects(filter func(hash *wire.ShaHash,
-	obj *wire.MsgObject) bool) (map[wire.ShaHash]*wire.MsgObject, error) {
-
-	db.RLock()
-	defer db.RUnlock()
-	if db.closed {
-		return nil, database.ErrDbClosed
+	err = cipher.TryDecryptAndVerifyPubKey(msg, addr)
+	if err != nil {
+		return nil, err
 	}
 
-	res := make(map[wire.ShaHash]*wire.MsgObject)
-	for hash, msg := range db.objectsByHash {
-		if filter(&hash, msg) { // we need this
-			res[hash] = msg.Copy()
-		}
-	}
+	// Successful decryption and signature verification.
+	signKey, _ := msg.SigningKey.ToBtcec()
+	encKey, _ := msg.EncryptionKey.ToBtcec()
 
-	return res, nil
+	// Add public key to database.
+	id = identity.NewPublic(signKey, encKey,
+		msg.NonceTrials, msg.ExtraBytes, msg.Version, msg.StreamNumber)
+	db.pubIDByAddress[addrStr] = id
+
+	// Delete from map of encrypted pubkeys.
+	delete(db.encryptedPubKeyByTag, tag)
+
+	return id, nil
+
 }
 
 // FetchRandomInvHashes returns the specified number of inventory hashes
-// corresponding to random unexpired objects from the database and filtering
-// them by calling filter(invHash, objectData) on each object. A return
-// value of true from filter means that the object would be returned.
-//
-// Useful for creating inv message, with filter being used to filter out
-// inventory hashes that have already been sent out to a particular node.
-//
-// WARNING: filter must not mutate the object and/or its inventory hash.
+// corresponding to random unexpired objects from the database.
 //
 // This is part of the database.Db interface implementation.
-func (db *MemDb) FetchRandomInvHashes(count uint64,
-	filter func(*wire.ShaHash, *wire.MsgObject) bool) ([]wire.ShaHash, error) {
+func (db *MemDb) FetchRandomInvHashes(count uint64) ([]*wire.InvVect, error) {
 
 	db.RLock()
 	defer db.RUnlock()
@@ -352,18 +317,15 @@ func (db *MemDb) FetchRandomInvHashes(count uint64,
 	}
 	// number of objects to be returned
 	counter := uint64(0)
-	// filtered hashes to be returned
-	res := make([]wire.ShaHash, 0, count)
+	res := make([]*wire.InvVect, 0, count)
 
 	// golang ensures that iteration over maps is psuedorandom
-	for hash, obj := range db.objectsByHash {
+	for hash := range db.objectsByHash {
 		if counter >= count { // we have all we need
 			break
 		}
-		if filter(&hash, obj) { // we need this item
-			res = append(res, hash)
-			counter++
-		}
+		res = append(res, &wire.InvVect{Hash: hash})
+		counter++
 	}
 
 	return res, nil
@@ -597,40 +559,7 @@ func (db *MemDb) RemovePublicIdentity(addr *bmutil.Address) error {
 
 }
 
-// RollbackClose discards the recent database changes to the previously saved
-// data at last Sync and closes the database. This is part of the database.Db
-// interface implementation.
-//
-// The database is completely purged on close with this implementation since the
-// entire database is only in memory. As a result, this function behaves no
-// differently than Close.
-func (db *MemDb) RollbackClose() error {
-	// Rollback doesn't apply to a memory database, so just call Close.
-	// Close handles the mutex locks.
-	return db.Close()
-}
-
-// Sync verifies that the database is coherent on disk and no outstanding
-// transactions are in flight. This is part of the database.Db interface
-// implementation.
-//
-// This implementation does not write any data to disk, so this function only
-// grabs a lock to ensure it doesn't return until other operations are complete.
-func (db *MemDb) Sync() error {
-	db.Lock()
-	defer db.Unlock()
-
-	if db.closed {
-		return database.ErrDbClosed
-	}
-
-	// There is nothing extra to do to sync the memory database. However,
-	// the lock is still grabbed to ensure the function does not return
-	// until other operations are complete.
-	return nil
-}
-
-// newMemDb returns a new memory-only database ready for block inserts.
+// newMemDb returns a new memory-only database ready for object insertion.
 func newMemDb() *MemDb {
 	db := MemDb{
 		objectsByHash:        make(map[wire.ShaHash]*wire.MsgObject),

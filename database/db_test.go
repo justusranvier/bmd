@@ -45,16 +45,15 @@ func TestAddDuplicateDriver(t *testing.T) {
 	// create and open functions to a function that causes a test failure if
 	// they are invoked.
 	driver := database.DriverDB{
-		DbType:   dbType,
-		CreateDB: bogusCreateDB,
-		OpenDB:   bogusCreateDB,
+		DbType: dbType,
+		OpenDB: bogusCreateDB,
 	}
 	database.AddDBDriver(driver)
 
 	// Ensure creating a database of the type that we tried to replace
 	// doesn't fail (if it does, it indicates the driver was erroneously
 	// replaced).
-	_, teardown, err := createDB(dbType, "dupdrivertest", true)
+	_, teardown, err := createDB(dbType)
 	if err != nil {
 		t.Errorf("TestAddDuplicateDriver: %v", err)
 		return
@@ -78,47 +77,28 @@ func TestCreateOpenFail(t *testing.T) {
 	// Create and add driver that intentionally fails when created or opened
 	// to ensure errors on database open and create are handled properly.
 	driver := database.DriverDB{
-		DbType:   dbType,
-		CreateDB: bogusCreateDB,
-		OpenDB:   bogusCreateDB,
+		DbType: dbType,
+		OpenDB: bogusCreateDB,
 	}
 	database.AddDBDriver(driver)
 
-	// Ensure creating a database with the new type fails with the expected
-	// error.
-	_, err := database.CreateDB(dbType, "createfailtest")
-	if err != openError {
-		t.Errorf("TestCreateOpenFail: expected error not received - "+
-			"got: %v, want %v", err, openError)
-		return
-	}
-
 	// Ensure opening a database with the new type fails with the expected
 	// error.
-	_, err = database.OpenDB(dbType, "openfailtest")
+	_, err := database.OpenDB(dbType, "openfailtest")
 	if err != openError {
-		t.Errorf("TestCreateOpenFail: expected error not received - "+
+		t.Errorf("TestOpenFail: expected error not received - "+
 			"got: %v, want %v", err, openError)
 		return
 	}
 }
 
-// TestCreateOpenUnsupported ensures that attempting to create or open an
-// unsupported database type is handled properly.
-func TestCreateOpenUnsupported(t *testing.T) {
-	// Ensure creating a database with an unsupported type fails with the
-	// expected error.
-	dbType := "unsupported"
-	_, err := database.CreateDB(dbType, "unsupportedcreatetest")
-	if err != database.ErrDbUnknownType {
-		t.Errorf("TestCreateOpenUnsupported: expected error not "+
-			"received - got: %v, want %v", err, database.ErrDbUnknownType)
-		return
-	}
-
+// TestOpenUnsupported ensures that attempting to create or open an unsupported
+// database type is handled properly.
+func TestOpenUnsupported(t *testing.T) {
 	// Ensure opening a database with the new type fails with the expected
 	// error.
-	_, err = database.OpenDB(dbType, "unsupportedopentest")
+	dbType := "unsupported"
+	_, err := database.OpenDB(dbType, "unsupportedopentest")
 	if err != database.ErrDbUnknownType {
 		t.Errorf("TestCreateOpenUnsupported: expected error not "+
 			"received - got: %v, want %v", err, database.ErrDbUnknownType)
@@ -133,15 +113,6 @@ func TestInterface(t *testing.T) {
 	for _, dbType := range database.SupportedDBs() {
 		if _, exists := ignoreDbTypes[dbType]; !exists {
 			testInterface(t, dbType)
-		}
-	}
-}
-
-// TestReorganization performs reorganization tests for each supported DB type
-func TestReorganization(t *testing.T) {
-	for _, dbType := range database.SupportedDBs() {
-		if _, exists := ignoreDbTypes[dbType]; !exists {
-			// testReorganization(t, dbType)
 		}
 	}
 }
