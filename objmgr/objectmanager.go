@@ -496,7 +496,6 @@ func (om *ObjectManager) objectHandler() {
 		// Relay to the other peers all the new invs collected
 		// during the past ten seconds.
 		case <-relayInvTick.C:
-			log.Trace("Relay inv ticker ticked.")
 			if om.relayInvList.Len() == 0 {
 				continue
 			}

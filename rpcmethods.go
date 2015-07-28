@@ -20,6 +20,8 @@ import (
 // SendObject inserts the object into bmd's database and sends it out to the
 // Bitmessage network.
 func (s *rpcServer) SendObject(ctx context.Context, in *pb.Object) (*pb.SendObjectReply, error) {
+	rpcLog.Trace("SendObject: object received to be sent out into the network.")
+
 	if code := s.restrictAuth(ctx); code != codes.OK {
 		return nil, grpc.Errorf(code, "auth failure")
 	}
@@ -56,6 +58,8 @@ func (s *rpcServer) SendObject(ctx context.Context, in *pb.Object) (*pb.SendObje
 		time.Now()) {
 		return nil, grpc.Errorf(codes.InvalidArgument, "invalid proof of work")
 	}
+
+	rpcLog.Trace("SendObject: Object will be sent out into the network.")
 
 	// Relay object to object manager which will handle insertion and
 	// advertisement.

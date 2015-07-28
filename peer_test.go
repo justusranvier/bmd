@@ -578,7 +578,7 @@ func TestProcessInvAndObjectExchange(t *testing.T) {
 		mockSend := NewMockSend(mockConn)
 		inventory := peer.NewInventory()
 		serv.handleAddPeerMsg(peer.NewPeerHandshakeComplete(
-			serv, mockConn, inventory, mockSend, addrout))
+			serv, mockConn, inventory, mockSend, addrout), 0)
 
 		var msg TestReport
 		msg = <-report
