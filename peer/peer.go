@@ -104,8 +104,6 @@ type Peer struct {
 	started    int32 // whether the peer has started.
 	disconnect int32 // Whether a disconnect is scheduled.
 
-	Na *wire.NetAddress
-
 	// Whether the peer has received its first inv. This is when it signals
 	// to the object manager that it is ready to start downloading.
 	invReceived bool
@@ -119,6 +117,7 @@ type Peer struct {
 	knownAddresses map[string]struct{}
 
 	StatsMtx          sync.RWMutex // protects all statistics below here.
+	na                *wire.NetAddress
 	versionKnown      bool
 	versionSent       bool
 	verAckReceived    bool
@@ -157,6 +156,13 @@ func (p *Peer) Addr() net.Addr {
 	return p.conn.RemoteAddr()
 }
 
+// NetAddress returns the net address of the remote peer. It may be nil.
+func (p *Peer) NetAddress() *wire.NetAddress {
+	p.StatsMtx.RLock()
+	defer p.StatsMtx.RUnlock()
+	return p.na
+}
+
 // Connected returns whether or not the peer is currently connected.
 func (p *Peer) Connected() bool {
 	return p.conn.Connected() &&
@@ -168,7 +174,7 @@ func (p *Peer) Connected() bool {
 // the server and object manager that the peer is done. It also sets
 // a flag so the impending shutdown can be detected.
 func (p *Peer) Disconnect() {
-	defer atomic.StoreInt32(&p.disconnect, 0)
+	log.Info(p.PrependAddr("Disconnecting."))
 	// Already stopping?
 	if atomic.AddInt32(&p.disconnect, 1) != 1 {
 		return
@@ -184,8 +190,6 @@ func (p *Peer) Disconnect() {
 	}
 	p.send.Stop()
 
-	log.Info(p.PrependAddr("Disconnected."))
-
 	atomic.StoreInt32(&p.started, 0)
 
 	// Only tell object manager we are gone if we ever told it we existed.
@@ -194,6 +198,8 @@ func (p *Peer) Disconnect() {
 	}
 
 	p.server.DonePeer(p)
+	log.Info(p.PrependAddr("Disconnected."))
+	atomic.StoreInt32(&p.disconnect, 0)
 }
 
 // Start starts running the peer.
@@ -201,7 +207,7 @@ func (p *Peer) Start() error {
 	if atomic.AddInt32(&p.started, 1) != 1 {
 		return nil
 	}
-	log.Info(p.PrependAddr("Started."))
+	log.Info(p.PrependAddr("Starting."))
 
 	if !p.conn.Connected() {
 		err := p.connect()
@@ -219,6 +225,7 @@ func (p *Peer) Start() error {
 	if !p.Inbound {
 		p.PushVersionMsg()
 	}
+	log.Info(p.PrependAddr("Started."))
 	return nil
 }
 
@@ -258,7 +265,7 @@ func (p *Peer) PushVersionMsg() {
 		return
 	}
 
-	theirNa := p.Na
+	theirNa := p.NetAddress()
 	// p.Na could be nil if this is an inbound peer but the version message
 	// has not yet been processed.
 	if theirNa == nil {
@@ -267,7 +274,7 @@ func (p *Peer) PushVersionMsg() {
 
 	// Version message.
 	msg := wire.NewMsgVersion(
-		p.server.AddrManager().GetBestLocalAddress(p.Na), theirNa,
+		p.server.AddrManager().GetBestLocalAddress(theirNa), theirNa,
 		p.server.Nonce(), defaultStreamList)
 	msg.AddUserAgent(userAgentName, userAgentVersion)
 
@@ -381,9 +388,9 @@ func (p *Peer) PushAddrMsg(addresses []*wire.NetAddress) error {
 		numAdded++
 	}
 	if numAdded > 0 {
-		for _, Na := range msg.AddrList {
+		for _, na := range msg.AddrList {
 			// Add address to known addresses for this peer.
-			p.knownAddresses[addrmgr.NetAddressKey(Na)] = struct{}{}
+			p.knownAddresses[addrmgr.NetAddressKey(na)] = struct{}{}
 		}
 
 		p.QueueMessage(msg)
@@ -403,9 +410,10 @@ func (p *Peer) updateAddresses() {
 	// A peer might not be advertising the same address that it
 	// actually connected from. One example of why this can happen
 	// is with NAT. Only add the actual address to the address manager.
+	na := p.NetAddress()
 	addrMgr := p.server.AddrManager()
-	addrMgr.AddAddress(p.Na, p.Na)
-	addrMgr.Good(p.Na)
+	addrMgr.AddAddress(na, na)
+	addrMgr.Good(na)
 }
 
 // HandleVersionMsg is invoked when a peer receives a version bitmessage message
@@ -437,8 +445,6 @@ func (p *Peer) HandleVersionMsg(msg *wire.MsgVersion) error {
 	// Set the remote peer's user agent.
 	p.userAgent = msg.UserAgent
 
-	p.StatsMtx.Unlock()
-
 	// Inbound connections.
 	if p.Inbound {
 		// Set up a NetAddress for the peer to be used with addrManager.
@@ -450,10 +456,13 @@ func (p *Peer) HandleVersionMsg(msg *wire.MsgVersion) error {
 		if err != nil {
 			return fmt.Errorf("Can't send version message: %s", err)
 		}
-		p.Na = na
+		p.na = na
+		p.StatsMtx.Unlock()
 
 		// Send version.
 		p.PushVersionMsg()
+	} else {
+		p.StatsMtx.Unlock()
 	}
 
 	// Send verack.
@@ -462,7 +471,7 @@ func (p *Peer) HandleVersionMsg(msg *wire.MsgVersion) error {
 	// Update the address manager.
 	p.updateAddresses()
 
-	p.server.AddrManager().Connected(p.Na)
+	p.server.AddrManager().Connected(p.NetAddress())
 	p.handleInitialConnection()
 	return nil
 }
@@ -481,7 +490,7 @@ func (p *Peer) HandleVerAckMsg() error {
 	log.Debug(p.PrependAddr("Ver ack msg received."))
 
 	p.verAckReceived = true
-	p.server.AddrManager().Connected(p.Na)
+	p.server.AddrManager().Connected(p.NetAddress())
 	p.handleInitialConnection()
 	return nil
 }
@@ -522,7 +531,7 @@ func (p *Peer) HandleInvMsg(msg *wire.MsgInv) error {
 	}
 
 	p.server.ObjectManager().QueueInv(msg, p)
-	p.server.AddrManager().Connected(p.Na)
+	p.server.AddrManager().Connected(p.NetAddress())
 	return nil
 }
 
@@ -538,7 +547,7 @@ func (p *Peer) HandleGetDataMsg(msg *wire.MsgGetData) error {
 	if err != nil {
 		return err
 	}
-	p.server.AddrManager().Connected(p.Na)
+	p.server.AddrManager().Connected(p.NetAddress())
 	return nil
 }
 
@@ -557,7 +566,7 @@ func (p *Peer) HandleObjectMsg(msg *wire.MsgObject) error {
 	if p.signalReady == p.Inventory.NumRequests() || p.Inventory.NumRequests() == 0 {
 		p.server.ObjectManager().ReadyPeer(p)
 	}
-	p.server.AddrManager().Connected(p.Na)
+	p.server.AddrManager().Connected(p.NetAddress())
 
 	return nil
 }
@@ -594,8 +603,9 @@ func (p *Peer) HandleAddrMsg(msg *wire.MsgAddr) error {
 	// Add addresses to server address manager. The address manager handles
 	// the details of things such as preventing duplicate addresses, max
 	// addresses, and last seen updates.
-	p.server.AddrManager().AddAddresses(msg.AddrList, p.Na)
-	p.server.AddrManager().Connected(p.Na)
+	na := p.NetAddress()
+	p.server.AddrManager().AddAddresses(msg.AddrList, na)
+	p.server.AddrManager().Connected(na)
 	return nil
 }
 
@@ -724,7 +734,7 @@ func NewPeer(s server, conn Connection, inventory *Inventory, send Send,
 		knownAddresses:  make(map[string]struct{}),
 		Persistent:      persistent,
 		Inbound:         inbound,
-		Na:              na,
+		na:              na,
 	}
 
 	return p
@@ -746,7 +756,7 @@ func NewPeerHandshakeComplete(s server, conn Connection, inventory *Inventory, s
 		versionSent:     true,
 		versionKnown:    true,
 		userAgent:       wire.DefaultUserAgent,
-		Na:              na,
+		na:              na,
 	}
 
 	return p

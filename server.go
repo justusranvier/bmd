@@ -43,6 +43,10 @@ const (
 	// connectionRetryInterval is the amount of time to wait in between
 	// retries when connecting to persistent peers.
 	connectionRetryInterval = time.Second * 10
+
+	// maxReconnectionAttempts is the maximum number of reconnection attempts
+	// allowed before a persistant peer is dropped.
+	maxReconnectionAttempts = 5
 )
 
 // randomUint16Number returns a random uint16 in a specified input range. Note
@@ -189,8 +193,15 @@ func (s *server) NotifyObject(counter wire.ObjectType) {
 
 // handleAddPeerMsg deals with adding new peers. It is invoked from the
 // peerHandler goroutine.
-func (s *server) handleAddPeerMsg(p *peer.Peer) bool {
+func (s *server) handleAddPeerMsg(p *peer.Peer, retries reconnectionAttempts) bool {
+	peerLog.Trace(p.PrependAddr("handleAddPeerMsg: About to add peer."))
 	if p == nil {
+		return false
+	}
+
+	// Drop if the number of reconnection attempts is too high.
+	if retries > maxReconnectionAttempts {
+		p.Disconnect()
 		return false
 	}
 
@@ -200,7 +211,7 @@ func (s *server) handleAddPeerMsg(p *peer.Peer) bool {
 		return false
 	}
 
-	// Disconnect banned peers.
+	// Ignore banned peers.
 	host, _, err := net.SplitHostPort(p.Addr().String())
 	if err != nil {
 		p.Disconnect()
@@ -219,6 +230,7 @@ func (s *server) handleAddPeerMsg(p *peer.Peer) bool {
 
 	// Limit max number of total peers.
 	if s.state.Count() >= cfg.MaxPeers {
+		peerLog.Trace(p.PrependAddr("handleAddPeerMsg: Disconnecting because of too many peers."))
 		p.Disconnect()
 		// TODO(oga) how to handle permanent peers here?
 		// they should be rescheduled.
@@ -226,17 +238,41 @@ func (s *server) handleAddPeerMsg(p *peer.Peer) bool {
 	}
 	peerLog.Infof(p.PrependAddr("Added to server."))
 
-	// Add the new peer and start it.
+	// Add the new peer to the appropriate peer bin and start running it.
+	na := p.NetAddress()
 	if p.Inbound {
 		s.state.peers[p] = struct{}{}
-		p.Start()
 	} else {
-		s.state.outboundGroups[addrmgr.GroupKey(p.Na)]++
+		s.state.outboundGroups[addrmgr.GroupKey(na)]++
 		if p.Persistent {
-			s.state.persistentPeers[p] = 0
+			s.state.persistentPeers[p] = retries
 		} else {
 			s.state.outboundPeers[p] = struct{}{}
 		}
+	}
+
+	if !p.Connected() {
+		// Attempt to connect with the new peer if it is not already connected.
+		go func() {
+			// Wait for some time if this is a retry, and wait longer if we have
+			// tried multiple times.
+			if retries > 0 {
+				scaledInterval := connectionRetryInterval.Nanoseconds() * int64(retries) / 2
+				scaledDuration := time.Duration(scaledInterval)
+				time.Sleep(scaledDuration)
+			}
+
+			peerLog.Trace("NewOutboundPeer: About to start peer ", p.Addr(), ".")
+
+			if p.Start() != nil {
+				s.DonePeer(p)
+			}
+			peerLog.Trace("NewOutboundPeer: ", p.Addr(), " started.")
+
+			if na != nil {
+				s.addrManager.Attempt(na)
+			}
+		}()
 	}
 
 	return true
@@ -245,27 +281,29 @@ func (s *server) handleAddPeerMsg(p *peer.Peer) bool {
 // handleDonePeerMsg deals with peers that have signalled they are done. It is
 // invoked from the peerHandler goroutine.
 func (s *server) handleDonePeerMsg(p *peer.Peer) {
+	serverLog.Trace("handleDonePeerMsg for ", p.Addr())
+	na := p.NetAddress()
 	if p.Persistent {
 		list := s.state.persistentPeers
 		retries := list[p] + 1
 		delete(list, p)
+		s.state.outboundGroups[addrmgr.GroupKey(na)]--
 		peerLog.Info(p.PrependAddr("Removed from server. "), len(list), " persistent peers remain.")
 
 		if !p.Inbound && atomic.LoadInt32(&s.shutdown) == 0 {
 			// TODO eventually we shouldn't work with addresses represented as strings at all.
-			list[NewOutboundPeer(p.Addr().String(), s, p.Na.Stream, true, retries)] = retries
-			peerLog.Infof(p.PrependAddr("Reconnected."))
+			s.handleAddPeerMsg(NewOutboundPeer(p.Addr().String(), s, na.Stream, true), retries)
 		}
 
 	} else if p.Inbound {
 		delete(s.state.peers, p)
 		peerLog.Info(p.PrependAddr("Removed from server. "),
-			len(s.state.peers)-1, " inbound peers remain.")
+			len(s.state.peers), " inbound peers remain.")
 	} else {
 		delete(s.state.outboundPeers, p)
-		s.state.outboundGroups[addrmgr.GroupKey(p.Na)]--
+		s.state.outboundGroups[addrmgr.GroupKey(na)]--
 		peerLog.Info(p.PrependAddr("Removed from server. "),
-			len(s.state.outboundPeers)-1, " outbound peers remain.")
+			len(s.state.outboundPeers), " outbound peers remain.")
 	}
 }
 
@@ -305,7 +343,7 @@ func (s *server) AddNewPeer(addr string, stream uint32, permanent bool) error {
 		}
 	}
 	// TODO(oga) if too many, nuke a non-perm peer.
-	if !s.handleAddPeerMsg(NewOutboundPeer(addr, s, stream, permanent, 0)) {
+	if !s.handleAddPeerMsg(NewOutboundPeer(addr, s, stream, permanent), 0) {
 		return errors.New("failed to add peer")
 	}
 
@@ -407,6 +445,7 @@ func (s *server) peerHandler() {
 	time.AfterFunc(10*time.Second, func() { s.wakeup <- struct{}{} })
 
 	for {
+		serverLog.Info("starting main peer handler loop.")
 		select {
 		// Shutdown the peer handler.
 		case <-s.quit:
@@ -421,7 +460,7 @@ func (s *server) peerHandler() {
 
 		// New peers connected to the server.
 		case p := <-s.newPeers:
-			s.handleAddPeerMsg(p)
+			s.handleAddPeerMsg(p, 0)
 
 		// Disconnected peers.
 		case p := <-s.donePeers:
@@ -449,6 +488,7 @@ func (s *server) peerHandler() {
 		tries := 0
 		for s.state.NeedMoreOutbound() &&
 			atomic.LoadInt32(&s.shutdown) == 0 {
+			serverLog.Info("Adding new peers.")
 
 			nPeers := s.state.OutboundCount()
 			if nPeers > cfg.MaxPeers {
@@ -495,11 +535,10 @@ func (s *server) peerHandler() {
 			tries = 0
 			// any failure will be due to banned peers etc. we have
 			// already checked that we have room for more peers.
-			if s.handleAddPeerMsg(
+			s.handleAddPeerMsg(
 				// Stream number 1 is hard-coded in here. Will have to handle
 				// this more gracefully when we support streams.
-				NewOutboundPeer(addrStr, s, 1, false, 0)) {
-			}
+				NewOutboundPeer(addrStr, s, 1, false), 0)
 		}
 
 		// We need more peers, wake up in ten seconds and try again.

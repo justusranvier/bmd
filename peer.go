@@ -10,7 +10,6 @@ package main
 import (
 	"net"
 	"strconv"
-	"time"
 
 	"github.com/monetas/bmd/peer"
 )
@@ -30,7 +29,7 @@ func NewInboundPeer(s *server, conn peer.Connection) *peer.Peer {
 // NewOutboundPeer returns a new outbound bitmessage peer for the provided server and
 // address and connects to it asynchronously. If the connection is successful
 // then the peer will also be started.
-func NewOutboundPeer(addr string, s *server, stream uint32, persistent bool, retries reconnectionAttempts) *peer.Peer {
+func NewOutboundPeer(addr string, s *server, stream uint32, persistent bool) *peer.Peer {
 	// Setup p.na with a temporary address that we are connecting to with
 	// faked up service flags. We will replace this with the real one after
 	// version negotiation is successful. The only failure case here would
@@ -60,18 +59,6 @@ func NewOutboundPeer(addr string, s *server, stream uint32, persistent bool, ret
 	sq := peer.NewSend(inventory, s.db)
 	p := peer.NewPeer(s, conn, inventory, sq, na, false, persistent)
 
-	go func() {
-		// Wait for some time if this is a retry, and wait longer if we have
-		// tried multiple times.
-		if retries > 0 {
-			scaledInterval := connectionRetryInterval.Nanoseconds() * int64(retries) / 2
-			scaledDuration := time.Duration(scaledInterval)
-			time.Sleep(scaledDuration)
-		}
-
-		p.Start()
-
-		s.addrManager.Attempt(na)
-	}()
+	peerLog.Trace("NewOutboundPeer ", addr, " created.")
 	return p
 }
