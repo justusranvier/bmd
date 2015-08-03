@@ -263,7 +263,6 @@ func (om *ObjectManager) handleInvMsg(imsg *invMsg) {
 
 		for _, iv := range requestList[:numInvs] {
 			now := time.Now()
-			//log.Trace(imsg.peer.addr.String(), " requests ", iv.Hash.String()[:8], " at ", now)
 			om.requested[*iv] = &peerRequest{
 				peer:       imsg.peer,
 				timestamp:  now,
@@ -299,14 +298,13 @@ func (om *ObjectManager) handleInvMsg(imsg *invMsg) {
 	}
 }
 
-// assignRequestsAll takes the list of unknown objects and tries to assign
-// some to each peer, up to the maximum allowed.
+// assignRequests takes the list of unknown objects and tries to assign some
+// to each peer, up to the maximum allowed.
 func (om *ObjectManager) assignRequests() {
 	if len(om.peers) == 0 {
 		return
 	}
 	log.Trace("Assigning objects to peers for download; number of requested objects: ", len(om.requested))
-	time.Sleep(5 * time.Second)
 
 	for peer := range om.peers {
 		if len(om.unknown) == 0 {
@@ -351,9 +349,7 @@ func (om *ObjectManager) handleReadyPeer(p *peer.Peer) {
 	// Since unknown is a map, the elements come out randomly ordered. Therefore
 	// (for now at least) object request handling does not work like a queue.
 	// We might ask for new invs earlier than old invs, or with any order at all.
-	//log.Trace("Looping through unknown objects. Max is ", max)
 	for iv, knownSince := range om.unknown {
-		//log.Trace("inv : ", iv.Hash.String())
 		if assigned >= max {
 			break
 		}
@@ -376,7 +372,6 @@ func (om *ObjectManager) handleReadyPeer(p *peer.Peer) {
 		delete(om.unknown, iv)
 
 		now := time.Now()
-		//log.Trace(peer.addr.String(), " requests ", iv.Hash.String()[:8], " at ", now)
 		om.requested[iv] = &peerRequest{
 			peer:       p,
 			timestamp:  now,
