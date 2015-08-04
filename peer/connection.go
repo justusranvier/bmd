@@ -145,14 +145,12 @@ func (pc *connection) RemoteAddr() net.Addr {
 
 // Close disconnects the peer and stops running the connection.
 func (pc *connection) Close() {
-	if pc.Connected() {
-		pc.connMtx.Lock()
-		conn := pc.conn
+	pc.connMtx.Lock()
+	if pc.conn != nil {
+		pc.conn.Close()
 		pc.conn = nil
-		pc.connMtx.Unlock()
-		conn.Close()
 	}
-
+	pc.connMtx.Unlock()
 	pc.idleTimer.Stop()
 }
 
