@@ -53,8 +53,7 @@ func NewOutboundPeer(addr string, s *server, stream uint32, persistent bool) *pe
 		return nil
 	}
 
-	tcpAddr := &net.TCPAddr{IP: net.ParseIP(host), Port: int(port)}
-	conn := NewConn(tcpAddr, int64(cfg.MaxDownPerPeer), int64(cfg.MaxUpPerPeer))
+	conn := NewConn((*peer.Addr)(na), int64(cfg.MaxDownPerPeer), int64(cfg.MaxUpPerPeer))
 	inventory := peer.NewInventory()
 	sq := peer.NewSend(inventory, s.db)
 	p := peer.NewPeer(s, conn, inventory, sq, na, false, persistent)

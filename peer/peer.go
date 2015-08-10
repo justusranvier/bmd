@@ -452,7 +452,8 @@ func (p *Peer) HandleVersionMsg(msg *wire.MsgVersion) error {
 		// at connection time and no point recomputing.
 		// We only use the first stream number for now because bitmessage has
 		// only one stream.
-		na, err := wire.NewNetAddress(p.Addr(), uint32(msg.StreamNumbers[0]), p.services)
+		tcpAddr := &net.TCPAddr{IP: p.NetAddress().IP, Port: int(p.NetAddress().Port)}
+		na, err := wire.NewNetAddress(tcpAddr, uint32(msg.StreamNumbers[0]), p.services)
 		if err != nil {
 			return fmt.Errorf("Can't send version message: %s", err)
 		}
