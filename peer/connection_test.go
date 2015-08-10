@@ -98,8 +98,8 @@ func TestUnconnectedConnection(t *testing.T) {
 		t.Error("The remote adder should not be nil.")
 	}
 
-	msg, err := conn.ReadMessage()
-	if err != nil || msg != nil {
+	_, err := conn.ReadMessage()
+	if err == nil {
 		t.Error("It should be impossible to read messages before connection is established.")
 	}
 

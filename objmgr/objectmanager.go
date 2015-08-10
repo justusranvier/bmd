@@ -501,7 +501,7 @@ func (om *ObjectManager) objectHandler() {
 				i++
 			}
 			om.relayInvList = list.New()
-			log.Trace("Relying list of invs of size ", len(invs))
+			log.Trace("Relaying list of invs of size ", len(invs))
 			om.handleRelayInvMsg(invs)
 
 		// Clean all expired inventory from all peers.

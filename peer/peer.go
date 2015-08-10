@@ -666,7 +666,7 @@ out:
 		rmsg, err := p.conn.ReadMessage()
 		// Stop the timer now, if we go around again we will reset it.
 		idleTimer.Stop()
-		if err != nil {
+		if err != nil && err != errNoConnection {
 			log.Debugf(p.PrependAddr("Invalid message received: "), err)
 			// Ignore messages we don't understand.
 			continue

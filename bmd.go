@@ -95,7 +95,6 @@ func bmdMain() error {
 	addInterruptHandler(func() {
 		bmdLog.Infof("Gracefully shutting down the server...")
 		server.Stop()
-		server.WaitForShutdown()
 	})
 
 	// Monitor for graceful server shutdown and signal the main goroutine
