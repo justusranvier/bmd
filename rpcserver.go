@@ -87,12 +87,12 @@ func (s *rpcServer) restrictAuth(ctx context.Context) codes.Code {
 	if !ok {
 		return codes.Unauthenticated
 	}
-	login, ok := md["Authorization"]
+	login, ok := md["authorization"]
 	if !ok {
 		return codes.Unauthenticated
 	}
 
-	authsha := sha256.Sum256([]byte(login))
+	authsha := sha256.Sum256([]byte(login[0]))
 
 	// Check for limited auth first as in environments with limited users, those
 	// are probably expected to have a higher volume of calls
@@ -117,12 +117,12 @@ func (s *rpcServer) restrictAdmin(ctx context.Context) codes.Code {
 	if !ok {
 		return codes.Unauthenticated
 	}
-	login, ok := md["Authorization"]
+	login, ok := md["authorization"]
 	if !ok {
 		return codes.Unauthenticated
 	}
 
-	authsha := sha256.Sum256([]byte(login))
+	authsha := sha256.Sum256([]byte(login[0]))
 	// Check for admin-level auth
 	cmp := subtle.ConstantTimeCompare(authsha[:], s.authsha[:])
 	if cmp == 1 {

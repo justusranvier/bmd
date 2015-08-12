@@ -19,7 +19,7 @@ type BasicAuthCredentials string
 // GetRequestMetadata implements the credentials.Credentials interface.
 func (cred BasicAuthCredentials) GetRequestMetadata(ctx context.Context) (map[string]string, error) {
 	return map[string]string{
-		"Authorization": "Basic " + string(cred),
+		"authorization": "Basic " + string(cred),
 	}, nil
 }
 
