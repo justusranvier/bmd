@@ -264,7 +264,8 @@ func (s *server) handleAddPeerMsg(p *peer.Peer, retries reconnectionAttempts) bo
 
 			peerLog.Trace("NewOutboundPeer: About to start peer ", p.Addr(), ".")
 
-			if p.Start() != nil {
+			if err := p.Start(); err != nil {
+				peerLog.Tracef("Failed to start peer %s: %v", p.Addr(), err)
 				s.DonePeer(p)
 			}
 			peerLog.Trace("NewOutboundPeer: ", p.Addr(), " started.")
@@ -445,7 +446,6 @@ func (s *server) peerHandler() {
 	time.AfterFunc(10*time.Second, func() { s.wakeup <- struct{}{} })
 
 	for {
-		serverLog.Info("starting main peer handler loop.")
 		select {
 		// Shutdown the peer handler.
 		case <-s.quit:

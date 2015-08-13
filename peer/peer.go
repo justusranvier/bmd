@@ -9,6 +9,7 @@ import (
 	"fmt"
 	prand "math/rand"
 	"net"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -160,6 +161,7 @@ func (p *Peer) Addr() net.Addr {
 func (p *Peer) NetAddress() *wire.NetAddress {
 	p.StatsMtx.RLock()
 	defer p.StatsMtx.RUnlock()
+
 	return p.na
 }
 
@@ -445,6 +447,8 @@ func (p *Peer) HandleVersionMsg(msg *wire.MsgVersion) error {
 	// Set the remote peer's user agent.
 	p.userAgent = msg.UserAgent
 
+	p.StatsMtx.Unlock()
+
 	// Inbound connections.
 	if p.Inbound {
 		// Set up a NetAddress for the peer to be used with addrManager.
@@ -452,17 +456,29 @@ func (p *Peer) HandleVersionMsg(msg *wire.MsgVersion) error {
 		// at connection time and no point recomputing.
 		// We only use the first stream number for now because bitmessage has
 		// only one stream.
-		na, err := wire.NewNetAddress(p.Addr(), uint32(msg.StreamNumbers[0]), p.services)
+
+		addr := p.Addr().String()
+		host, portStr, err := net.SplitHostPort(addr)
+		if err != nil {
+			return err
+		}
+
+		port, err := strconv.ParseUint(portStr, 10, 16)
+		if err != nil {
+			return err
+		}
+
+		na, err := p.server.AddrManager().HostToNetAddress(host, uint16(port), msg.StreamNumbers[0], p.services)
 		if err != nil {
 			return fmt.Errorf("Can't send version message: %s", err)
 		}
+
+		p.StatsMtx.Lock()
 		p.na = na
 		p.StatsMtx.Unlock()
 
 		// Send version.
 		p.PushVersionMsg()
-	} else {
-		p.StatsMtx.Unlock()
 	}
 
 	// Send verack.
@@ -665,7 +681,7 @@ out:
 		rmsg, err := p.conn.ReadMessage()
 		// Stop the timer now, if we go around again we will reset it.
 		idleTimer.Stop()
-		if err != nil {
+		if err != nil && err != errNoConnection {
 			log.Debugf(p.PrependAddr("Invalid message received: "), err)
 			// Ignore messages we don't understand.
 			continue

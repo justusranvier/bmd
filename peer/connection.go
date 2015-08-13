@@ -14,6 +14,8 @@ import (
 	"github.com/monetas/bmutil/wire"
 )
 
+var errNoConnection = errors.New("no connection established")
+
 // Connection is a bitmessage connection that abstracts the underlying tcp
 // connection away. The user of the Connection only uses bitmessage
 // wire.Message objects instead of the underlying byte stream.
@@ -53,15 +55,16 @@ type connection struct {
 
 // WriteMessage sends a bitmessage p2p message along the tcp connection.
 func (pc *connection) WriteMessage(msg wire.Message) error {
-	// conn will be nill if the connection disconnected.
-	if !pc.Connected() {
-		return errors.New("No connection established.")
-	}
-
-	// Write the message to the peer.
+	// conn will be nil if the connection disconnected.
 	pc.connMtx.RLock()
+	if pc.conn == nil {
+		pc.connMtx.RUnlock()
+		return errNoConnection
+	}
 	conn := pc.conn
 	pc.connMtx.RUnlock()
+
+	// Write message to peer.
 	n, err := wire.WriteMessageN(conn, msg, wire.MainNet)
 
 	pc.sentMtx.Lock()
@@ -73,7 +76,7 @@ func (pc *connection) WriteMessage(msg wire.Message) error {
 
 	if err != nil {
 		if !pc.Connected() { // Connection might have been closed while reading.
-			return nil
+			return errNoConnection
 		}
 		pc.Close()
 		return err
@@ -84,14 +87,16 @@ func (pc *connection) WriteMessage(msg wire.Message) error {
 
 // ReadMessage reads a bitmessage p2p message from the tcp connection.
 func (pc *connection) ReadMessage() (wire.Message, error) {
-	// conn will be nill if the connection disconnected.
-	if !pc.Connected() {
-		return nil, nil
-	}
-
+	// conn will be nil if the connection disconnected.
 	pc.connMtx.RLock()
+	if pc.conn == nil {
+		pc.connMtx.RUnlock()
+		return nil, errNoConnection
+	}
 	conn := pc.conn
 	pc.connMtx.RUnlock()
+
+	// Read message from peer.
 	n, msg, _, err := wire.ReadMessageN(conn, wire.MainNet)
 
 	pc.receivedMtx.Lock()
@@ -103,7 +108,7 @@ func (pc *connection) ReadMessage() (wire.Message, error) {
 
 	if err != nil {
 		if !pc.Connected() { // Connection might have been closed while reading.
-			return nil, nil
+			return nil, errNoConnection
 		}
 		pc.Close()
 		return nil, err
@@ -116,6 +121,7 @@ func (pc *connection) ReadMessage() (wire.Message, error) {
 func (pc *connection) BytesWritten() uint64 {
 	pc.sentMtx.Lock()
 	defer pc.sentMtx.Unlock()
+
 	return pc.bytesSent
 }
 
@@ -123,19 +129,18 @@ func (pc *connection) BytesWritten() uint64 {
 func (pc *connection) BytesRead() uint64 {
 	pc.receivedMtx.Lock()
 	defer pc.receivedMtx.Unlock()
+
 	return pc.bytesReceived
 }
 
 // LastWrite returns the last time that a message was written.
 func (pc *connection) LastWrite() time.Time {
-	t := pc.lastWrite
-	return t
+	return pc.lastWrite
 }
 
 // LastRead returns the last time that a message was read.
 func (pc *connection) LastRead() time.Time {
-	t := pc.lastRead
-	return t
+	return pc.lastRead
 }
 
 // RemoteAddr returns the address of the remote peer.
@@ -158,6 +163,7 @@ func (pc *connection) Close() {
 func (pc *connection) Connected() bool {
 	pc.connMtx.RLock()
 	defer pc.connMtx.RUnlock()
+
 	return pc.conn != nil
 }
 

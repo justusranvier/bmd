@@ -269,6 +269,8 @@ out:
 // goroutine. It uses a buffered channel to serialize output messages while
 // allowing the sender to continue running asynchronously.
 func (send *send) outHandler() {
+	defer send.doneWg.Done()
+
 out:
 	for {
 		var msg wire.Message
@@ -285,7 +287,6 @@ out:
 		if msg != nil {
 			err := send.conn.WriteMessage(msg)
 			if err != nil {
-				send.doneWg.Done()
 				// Run in a separate go routine because otherwise outHandler
 				// would never quit.
 				go func() {
@@ -295,8 +296,6 @@ out:
 			}
 		}
 	}
-
-	send.doneWg.Done()
 }
 
 // A helper function for logging that adds the ip address to the start of the
