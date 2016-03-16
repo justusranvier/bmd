@@ -18,6 +18,8 @@ It has these top-level messages:
 package rpcproto
 
 import proto "github.com/golang/protobuf/proto"
+import fmt "fmt"
+import math "math"
 
 import (
 	context "golang.org/x/net/context"
@@ -25,11 +27,13 @@ import (
 )
 
 // Reference imports to suppress errors if they are not otherwise used.
-var _ context.Context
-var _ grpc.ClientConn
-
-// Reference imports to suppress errors if they are not otherwise used.
 var _ = proto.Marshal
+var _ = fmt.Errorf
+var _ = math.Inf
+
+// This is a compile-time assertion to ensure that this generated file
+// is compatible with the proto package it is being compiled against.
+const _ = proto.ProtoPackageIsVersion1
 
 // ObjectType is an enum which contains various types of objects.
 type ObjectType int32
@@ -60,15 +64,17 @@ var ObjectType_value = map[string]int32{
 func (x ObjectType) String() string {
 	return proto.EnumName(ObjectType_name, int32(x))
 }
+func (ObjectType) EnumDescriptor() ([]byte, []int) { return fileDescriptor0, []int{0} }
 
 type GetIdentityRequest struct {
 	// A properly formatted Bitmessage address.
 	Address string `protobuf:"bytes,1,opt,name=address" json:"address,omitempty"`
 }
 
-func (m *GetIdentityRequest) Reset()         { *m = GetIdentityRequest{} }
-func (m *GetIdentityRequest) String() string { return proto.CompactTextString(m) }
-func (*GetIdentityRequest) ProtoMessage()    {}
+func (m *GetIdentityRequest) Reset()                    { *m = GetIdentityRequest{} }
+func (m *GetIdentityRequest) String() string            { return proto.CompactTextString(m) }
+func (*GetIdentityRequest) ProtoMessage()               {}
+func (*GetIdentityRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{0} }
 
 type GetIdentityReply struct {
 	// Nonce Trials Per Byte: POW parameter.
@@ -81,9 +87,10 @@ type GetIdentityReply struct {
 	EncryptionKey []byte `protobuf:"bytes,4,opt,name=encryption_key,proto3" json:"encryption_key,omitempty"`
 }
 
-func (m *GetIdentityReply) Reset()         { *m = GetIdentityReply{} }
-func (m *GetIdentityReply) String() string { return proto.CompactTextString(m) }
-func (*GetIdentityReply) ProtoMessage()    {}
+func (m *GetIdentityReply) Reset()                    { *m = GetIdentityReply{} }
+func (m *GetIdentityReply) String() string            { return proto.CompactTextString(m) }
+func (*GetIdentityReply) ProtoMessage()               {}
+func (*GetIdentityReply) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{1} }
 
 type Object struct {
 	// Properly serialized object bytes. It includes the object header (but not
@@ -94,18 +101,20 @@ type Object struct {
 	Counter uint64 `protobuf:"varint,2,opt,name=counter" json:"counter,omitempty"`
 }
 
-func (m *Object) Reset()         { *m = Object{} }
-func (m *Object) String() string { return proto.CompactTextString(m) }
-func (*Object) ProtoMessage()    {}
+func (m *Object) Reset()                    { *m = Object{} }
+func (m *Object) String() string            { return proto.CompactTextString(m) }
+func (*Object) ProtoMessage()               {}
+func (*Object) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{2} }
 
 type SendObjectReply struct {
 	// Counter value of the object, as inserted in bmd's database.
 	Counter uint64 `protobuf:"varint,1,opt,name=counter" json:"counter,omitempty"`
 }
 
-func (m *SendObjectReply) Reset()         { *m = SendObjectReply{} }
-func (m *SendObjectReply) String() string { return proto.CompactTextString(m) }
-func (*SendObjectReply) ProtoMessage()    {}
+func (m *SendObjectReply) Reset()                    { *m = SendObjectReply{} }
+func (m *SendObjectReply) String() string            { return proto.CompactTextString(m) }
+func (*SendObjectReply) ProtoMessage()               {}
+func (*SendObjectReply) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{3} }
 
 type GetObjectsRequest struct {
 	// Type of object the client wants to receive.
@@ -114,19 +123,38 @@ type GetObjectsRequest struct {
 	FromCounter uint64 `protobuf:"varint,2,opt,name=from_counter" json:"from_counter,omitempty"`
 }
 
-func (m *GetObjectsRequest) Reset()         { *m = GetObjectsRequest{} }
-func (m *GetObjectsRequest) String() string { return proto.CompactTextString(m) }
-func (*GetObjectsRequest) ProtoMessage()    {}
+func (m *GetObjectsRequest) Reset()                    { *m = GetObjectsRequest{} }
+func (m *GetObjectsRequest) String() string            { return proto.CompactTextString(m) }
+func (*GetObjectsRequest) ProtoMessage()               {}
+func (*GetObjectsRequest) Descriptor() ([]byte, []int) { return fileDescriptor0, []int{4} }
 
 func init() {
+	proto.RegisterType((*GetIdentityRequest)(nil), "GetIdentityRequest")
+	proto.RegisterType((*GetIdentityReply)(nil), "GetIdentityReply")
+	proto.RegisterType((*Object)(nil), "Object")
+	proto.RegisterType((*SendObjectReply)(nil), "SendObjectReply")
+	proto.RegisterType((*GetObjectsRequest)(nil), "GetObjectsRequest")
 	proto.RegisterEnum("ObjectType", ObjectType_name, ObjectType_value)
 }
+
+// Reference imports to suppress errors if they are not otherwise used.
+var _ context.Context
+var _ grpc.ClientConn
 
 // Client API for Bmd service
 
 type BmdClient interface {
+	// Retrieve the public identity of the given address. This is constructed from
+	// public keys stored in the database. If the public key for the specified
+	// address doesn't exist, an error is returned.
 	GetIdentity(ctx context.Context, in *GetIdentityRequest, opts ...grpc.CallOption) (*GetIdentityReply, error)
+	// Send the specified object onto the network. The object is first verified,
+	// then inserted into bmd's database and advertised onto the network. Return
+	// value is the counter value of the inserted object.
 	SendObject(ctx context.Context, in *Object, opts ...grpc.CallOption) (*SendObjectReply, error)
+	// Gets objects of the specified type that have their counter values starting
+	// from what is specified. This method streams new objects until the stream
+	// is closed. Objects are guaranteed to be in ascending order.
 	GetObjects(ctx context.Context, in *GetObjectsRequest, opts ...grpc.CallOption) (Bmd_GetObjectsClient, error)
 }
 
@@ -140,7 +168,7 @@ func NewBmdClient(cc *grpc.ClientConn) BmdClient {
 
 func (c *bmdClient) GetIdentity(ctx context.Context, in *GetIdentityRequest, opts ...grpc.CallOption) (*GetIdentityReply, error) {
 	out := new(GetIdentityReply)
-	err := grpc.Invoke(ctx, "/.Bmd/GetIdentity", in, out, c.cc, opts...)
+	err := grpc.Invoke(ctx, "/Bmd/GetIdentity", in, out, c.cc, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -149,7 +177,7 @@ func (c *bmdClient) GetIdentity(ctx context.Context, in *GetIdentityRequest, opt
 
 func (c *bmdClient) SendObject(ctx context.Context, in *Object, opts ...grpc.CallOption) (*SendObjectReply, error) {
 	out := new(SendObjectReply)
-	err := grpc.Invoke(ctx, "/.Bmd/SendObject", in, out, c.cc, opts...)
+	err := grpc.Invoke(ctx, "/Bmd/SendObject", in, out, c.cc, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -157,7 +185,7 @@ func (c *bmdClient) SendObject(ctx context.Context, in *Object, opts ...grpc.Cal
 }
 
 func (c *bmdClient) GetObjects(ctx context.Context, in *GetObjectsRequest, opts ...grpc.CallOption) (Bmd_GetObjectsClient, error) {
-	stream, err := grpc.NewClientStream(ctx, &_Bmd_serviceDesc.Streams[0], c.cc, "/.Bmd/GetObjects", opts...)
+	stream, err := grpc.NewClientStream(ctx, &_Bmd_serviceDesc.Streams[0], c.cc, "/Bmd/GetObjects", opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -191,8 +219,17 @@ func (x *bmdGetObjectsClient) Recv() (*Object, error) {
 // Server API for Bmd service
 
 type BmdServer interface {
+	// Retrieve the public identity of the given address. This is constructed from
+	// public keys stored in the database. If the public key for the specified
+	// address doesn't exist, an error is returned.
 	GetIdentity(context.Context, *GetIdentityRequest) (*GetIdentityReply, error)
+	// Send the specified object onto the network. The object is first verified,
+	// then inserted into bmd's database and advertised onto the network. Return
+	// value is the counter value of the inserted object.
 	SendObject(context.Context, *Object) (*SendObjectReply, error)
+	// Gets objects of the specified type that have their counter values starting
+	// from what is specified. This method streams new objects until the stream
+	// is closed. Objects are guaranteed to be in ascending order.
 	GetObjects(*GetObjectsRequest, Bmd_GetObjectsServer) error
 }
 
@@ -200,9 +237,9 @@ func RegisterBmdServer(s *grpc.Server, srv BmdServer) {
 	s.RegisterService(&_Bmd_serviceDesc, srv)
 }
 
-func _Bmd_GetIdentity_Handler(srv interface{}, ctx context.Context, codec grpc.Codec, buf []byte) (interface{}, error) {
+func _Bmd_GetIdentity_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error) (interface{}, error) {
 	in := new(GetIdentityRequest)
-	if err := codec.Unmarshal(buf, in); err != nil {
+	if err := dec(in); err != nil {
 		return nil, err
 	}
 	out, err := srv.(BmdServer).GetIdentity(ctx, in)
@@ -212,9 +249,9 @@ func _Bmd_GetIdentity_Handler(srv interface{}, ctx context.Context, codec grpc.C
 	return out, nil
 }
 
-func _Bmd_SendObject_Handler(srv interface{}, ctx context.Context, codec grpc.Codec, buf []byte) (interface{}, error) {
+func _Bmd_SendObject_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error) (interface{}, error) {
 	in := new(Object)
-	if err := codec.Unmarshal(buf, in); err != nil {
+	if err := dec(in); err != nil {
 		return nil, err
 	}
 	out, err := srv.(BmdServer).SendObject(ctx, in)
@@ -246,7 +283,7 @@ func (x *bmdGetObjectsServer) Send(m *Object) error {
 }
 
 var _Bmd_serviceDesc = grpc.ServiceDesc{
-	ServiceName: ".Bmd",
+	ServiceName: "Bmd",
 	HandlerType: (*BmdServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
@@ -265,4 +302,31 @@ var _Bmd_serviceDesc = grpc.ServiceDesc{
 			ServerStreams: true,
 		},
 	},
+}
+
+var fileDescriptor0 = []byte{
+	// 362 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x09, 0x6e, 0x88, 0x02, 0xff, 0x64, 0x92, 0xef, 0x6a, 0xf2, 0x30,
+	0x14, 0xc6, 0xdf, 0xaa, 0xf8, 0xe7, 0xd4, 0x57, 0x63, 0x1c, 0x43, 0xfc, 0x24, 0x85, 0xb1, 0x31,
+	0xa1, 0x0c, 0xc7, 0x2e, 0xc0, 0x6e, 0x45, 0x86, 0x4c, 0xc5, 0x2a, 0x63, 0xfb, 0x52, 0x34, 0xcd,
+	0xa4, 0x4e, 0x93, 0x2e, 0x8d, 0xb0, 0xde, 0xc6, 0xae, 0x78, 0x6d, 0xa3, 0xa8, 0xeb, 0xa7, 0x96,
+	0x27, 0xbf, 0xe4, 0x3c, 0xe7, 0x39, 0x07, 0x2a, 0x22, 0x20, 0x66, 0x20, 0xb8, 0xe4, 0xc6, 0x15,
+	0xe0, 0x01, 0x95, 0xcf, 0x1e, 0x65, 0xd2, 0x97, 0xd1, 0x94, 0x7e, 0xed, 0x68, 0x28, 0x71, 0x1d,
+	0x4a, 0x0b, 0xcf, 0x13, 0x34, 0x0c, 0x5b, 0x5a, 0x47, 0xbb, 0xa9, 0x18, 0x6b, 0x40, 0x67, 0x58,
+	0xb0, 0x89, 0xf0, 0x05, 0x54, 0x19, 0x67, 0x84, 0xba, 0x52, 0xf8, 0x8b, 0x8d, 0x22, 0x0b, 0xb8,
+	0x09, 0x3a, 0xfd, 0x96, 0x62, 0xe1, 0x2e, 0x23, 0x49, 0xc3, 0x56, 0xee, 0x20, 0x86, 0xfe, 0x8a,
+	0xf9, 0x6c, 0xe5, 0x7e, 0xd2, 0xa8, 0x95, 0x8f, 0xc5, 0x2a, 0xbe, 0x84, 0x1a, 0x65, 0x44, 0x44,
+	0x81, 0xf4, 0x39, 0x4b, 0xf5, 0x42, 0xa2, 0x1b, 0x5d, 0x28, 0x8e, 0x97, 0x6b, 0x4a, 0x24, 0x46,
+	0x50, 0x26, 0x9c, 0xc9, 0xb8, 0xa8, 0x7a, 0xbd, 0x9a, 0x18, 0x23, 0x7c, 0x17, 0x4b, 0x42, 0xbd,
+	0x6c, 0x18, 0x50, 0x77, 0x28, 0xf3, 0xd4, 0x05, 0xe5, 0xeb, 0x84, 0x49, 0x2d, 0x19, 0x43, 0x68,
+	0xc4, 0xe6, 0x15, 0x12, 0x1e, 0x5a, 0xec, 0x80, 0xce, 0x53, 0xc5, 0x95, 0x51, 0x40, 0x53, 0xb2,
+	0xd6, 0xd3, 0x4d, 0x45, 0xcd, 0x62, 0x29, 0xe9, 0xef, 0x43, 0xf0, 0xad, 0x7b, 0x56, 0xf0, 0x76,
+	0x02, 0x70, 0xc2, 0xfc, 0x87, 0xca, 0xc0, 0x9e, 0x4d, 0xe6, 0xd6, 0xd0, 0x7e, 0x43, 0xff, 0x30,
+	0x40, 0x71, 0xff, 0xaf, 0x61, 0x1d, 0x4a, 0x2f, 0xb6, 0xe3, 0xf4, 0x07, 0x36, 0xca, 0x25, 0x9c,
+	0x35, 0x1d, 0xf7, 0x9f, 0x1e, 0xfb, 0xce, 0x0c, 0xe5, 0x93, 0xb3, 0xf9, 0x68, 0x38, 0x1a, 0xbf,
+	0x8e, 0x10, 0xe9, 0xfd, 0x68, 0x90, 0xb7, 0xb6, 0x1e, 0x7e, 0x00, 0xfd, 0x24, 0x63, 0xdc, 0x34,
+	0xb3, 0x83, 0x69, 0x37, 0xcc, 0xcc, 0x18, 0xae, 0x01, 0x8e, 0x09, 0xe0, 0xd2, 0xbe, 0x83, 0x36,
+	0x32, 0xff, 0xe6, 0xd2, 0x05, 0x38, 0xc6, 0x80, 0xb1, 0x99, 0xc9, 0xa4, 0x7d, 0xb8, 0x7c, 0xa7,
+	0x59, 0xf0, 0x5e, 0x8e, 0x97, 0x24, 0xdd, 0x91, 0x65, 0x31, 0xfd, 0xdc, 0xff, 0x06, 0x00, 0x00,
+	0xff, 0xff, 0x4b, 0xc8, 0xd9, 0x4b, 0x37, 0x02, 0x00, 0x00,
 }

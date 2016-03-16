@@ -34,7 +34,8 @@ func rpcTests(t *testing.T) {
 	testRPCAuth(t)
 
 	// Set up a connection to the server.
-	conn, err := grpc.Dial(rpcLoc, grpc.WithPerRPCCredentials(pb.NewBasicAuthCredentials(rpcAdminUser, rpcAdminPass)))
+	conn, err := grpc.Dial(rpcLoc, grpc.WithInsecure(),
+		grpc.WithPerRPCCredentials(pb.NewBasicAuthCredentials(rpcAdminUser, rpcAdminPass)))
 	if err != nil {
 		t.Fatalf("did not connect: %v", err)
 	}
@@ -48,7 +49,7 @@ func rpcTests(t *testing.T) {
 // testRPCAuth tests authentication failures for all RPC methods.
 func testRPCAuth(t *testing.T) {
 	// Try accessing methods with no credentials.
-	conn, err := grpc.Dial(rpcLoc)
+	conn, err := grpc.Dial(rpcLoc, grpc.WithInsecure())
 	if err != nil {
 		t.Fatalf("did not connect: %v", err)
 	}
@@ -58,7 +59,8 @@ func testRPCAuth(t *testing.T) {
 	conn.Close()
 
 	// Try accessing methods with invalid credentials.
-	conn, err = grpc.Dial(rpcLoc, grpc.WithPerRPCCredentials(pb.NewBasicAuthCredentials("blahblah", "blah blah")))
+	conn, err = grpc.Dial(rpcLoc, grpc.WithInsecure(),
+		grpc.WithPerRPCCredentials(pb.NewBasicAuthCredentials("blahblah", "blah blah")))
 	if err != nil {
 		t.Fatalf("did not connect: %v", err)
 	}
