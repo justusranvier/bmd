@@ -2,6 +2,7 @@
 // Copyright (c) 2013-2015 Conformal Systems LLC.
 
 // Copyright (c) 2015 Monetas.
+// Copyright 2016 Daniel Krawisz.
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
@@ -11,7 +12,7 @@ import (
 	"fmt"
 
 	"github.com/btcsuite/btclog"
-	"github.com/monetas/bmd/database"
+	"github.com/DanielKrawisz/bmd/database"
 )
 
 var log = btclog.Disabled

@@ -1,4 +1,5 @@
 // Copyright (c) 2015 Monetas.
+// Copyright 2016 Daniel Krawisz.
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
@@ -17,10 +18,14 @@ import (
 type BasicAuthCredentials string
 
 // GetRequestMetadata implements the credentials.Credentials interface.
-func (cred BasicAuthCredentials) GetRequestMetadata(ctx context.Context) (map[string]string, error) {
+func (cred BasicAuthCredentials) GetRequestMetadata(ctx context.Context, uri ...string) (map[string]string, error) {
 	return map[string]string{
 		"authorization": "Basic " + string(cred),
 	}, nil
+}
+
+func (cred BasicAuthCredentials) RequireTransportSecurity() bool {
+	return false;
 }
 
 // NewBasicAuthCredentials creates a new BasicAuthCredentials instance based on

@@ -1,4 +1,5 @@
 // Copyright (c) 2015 Monetas.
+// Copyright 2016 Daniel Krawisz.
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
@@ -15,12 +16,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monetas/bmd/database"
-	_ "github.com/monetas/bmd/database/memdb"
-	"github.com/monetas/bmd/peer"
-	"github.com/monetas/bmutil"
-	"github.com/monetas/bmutil/pow"
-	"github.com/monetas/bmutil/wire"
+	"github.com/DanielKrawisz/bmd/database"
+	_ "github.com/DanielKrawisz/bmd/database/memdb"
+	"github.com/DanielKrawisz/bmd/peer"
+	"github.com/DanielKrawisz/bmutil"
+	"github.com/DanielKrawisz/bmutil/pow"
+	"github.com/DanielKrawisz/bmutil/wire"
 )
 
 // resetCfg is called to refresh configuration before every test. The returned

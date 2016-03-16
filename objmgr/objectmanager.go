@@ -2,6 +2,7 @@
 // Copyright (c) 2013-2015 the btcsuite developers.
 
 // Copyright (c) 2015 Monetas.
+// Copyright 2016 Daniel Krawisz.
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
@@ -14,10 +15,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/monetas/bmd/database"
-	"github.com/monetas/bmd/peer"
-	"github.com/monetas/bmutil/pow"
-	"github.com/monetas/bmutil/wire"
+	"github.com/DanielKrawisz/bmd/database"
+	"github.com/DanielKrawisz/bmd/peer"
+	"github.com/DanielKrawisz/bmutil/pow"
+	"github.com/DanielKrawisz/bmutil/wire"
 )
 
 const (

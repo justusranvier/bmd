@@ -1,4 +1,5 @@
 // Copyright (c) 2015 Monetas.
+// Copyright 2016 Daniel Krawisz.
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
@@ -14,9 +15,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/monetas/bmd/addrmgr"
-	"github.com/monetas/bmd/database"
-	"github.com/monetas/bmutil/wire"
+	"github.com/DanielKrawisz/bmd/addrmgr"
+	"github.com/DanielKrawisz/bmd/database"
+	"github.com/DanielKrawisz/bmutil/wire"
 )
 
 const (

@@ -2,6 +2,7 @@
 // Copyright (c) 2013-2015 Conformal Systems LLC.
 
 // Copyright (c) 2015 Monetas.
+// Copyright 2016 Daniel Krawisz.
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
@@ -10,9 +11,9 @@ package database
 import (
 	"errors"
 
-	"github.com/monetas/bmutil"
-	"github.com/monetas/bmutil/identity"
-	"github.com/monetas/bmutil/wire"
+	"github.com/DanielKrawisz/bmutil"
+	"github.com/DanielKrawisz/bmutil/identity"
+	"github.com/DanielKrawisz/bmutil/wire"
 )
 
 // Errors that the various database functions may return.

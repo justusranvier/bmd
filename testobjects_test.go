@@ -9,8 +9,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/monetas/bmd/peer"
-	"github.com/monetas/bmutil/wire"
+	"github.com/DanielKrawisz/bmd/peer"
+	"github.com/DanielKrawisz/bmutil/wire"
 )
 
 // randomShaHash returns a ShaHash with a random string of bytes in it.

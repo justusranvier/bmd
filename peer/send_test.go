@@ -1,4 +1,5 @@
 // Copyright (c) 2015 Monetas.
+// Copyright 2016 Daniel Krawisz.
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
@@ -10,11 +11,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/monetas/bmd/database"
-	_ "github.com/monetas/bmd/database/memdb"
-	"github.com/monetas/bmd/peer"
-	"github.com/monetas/bmutil"
-	"github.com/monetas/bmutil/wire"
+	"github.com/DanielKrawisz/bmd/database"
+	_ "github.com/DanielKrawisz/bmd/database/memdb"
+	"github.com/DanielKrawisz/bmd/peer"
+	"github.com/DanielKrawisz/bmutil"
+	"github.com/DanielKrawisz/bmutil/wire"
 )
 
 var mockAddr net.Addr = &net.TCPAddr{IP: net.ParseIP("192.168.0.1"), Port: 8333}

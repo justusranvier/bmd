@@ -2,6 +2,7 @@
 // Copyright (c) 2013-2015 The btcsuite developers.
 
 // Copyright (c) 2015 Monetas.
+// Copyright 2016 Daniel Krawisz.
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
@@ -22,8 +23,8 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcutil"
-	pb "github.com/monetas/bmd/rpcproto"
-	"github.com/monetas/bmutil/wire"
+	pb "github.com/DanielKrawisz/bmd/rpcproto"
+	"github.com/DanielKrawisz/bmutil/wire"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"

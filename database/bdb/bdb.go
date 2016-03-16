@@ -1,4 +1,5 @@
 // Copyright (c) 2015 Monetas.
+// Copyright 2016 Daniel Krawisz.
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
@@ -13,11 +14,11 @@ import (
 
 	"github.com/boltdb/bolt"
 	"github.com/btcsuite/btcd/btcec"
-	"github.com/monetas/bmd/database"
-	"github.com/monetas/bmutil"
-	"github.com/monetas/bmutil/cipher"
-	"github.com/monetas/bmutil/identity"
-	"github.com/monetas/bmutil/wire"
+	"github.com/DanielKrawisz/bmd/database"
+	"github.com/DanielKrawisz/bmutil"
+	"github.com/DanielKrawisz/bmutil/cipher"
+	"github.com/DanielKrawisz/bmutil/identity"
+	"github.com/DanielKrawisz/bmutil/wire"
 )
 
 const (

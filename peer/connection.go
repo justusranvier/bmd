@@ -1,4 +1,5 @@
 // Copyright (c) 2015 Monetas.
+// Copyright 2016 Daniel Krawisz.
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
@@ -11,7 +12,7 @@ import (
 	"time"
 
 	"github.com/DanielKrawisz/maxrate"
-	"github.com/monetas/bmutil/wire"
+	"github.com/DanielKrawisz/bmutil/wire"
 )
 
 var errNoConnection = errors.New("no connection established")

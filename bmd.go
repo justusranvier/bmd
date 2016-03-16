@@ -2,6 +2,7 @@
 // Copyright (c) 2013-2015 Conformal Systems LLC.
 
 // Copyright (c) 2015 Monetas.
+// Copyright 2016 Daniel Krawisz.
 // Use of this source code is governed by an ISC
 // license that can be found in the LICENSE file.
 
@@ -16,9 +17,9 @@ import (
 	"runtime"
 	"runtime/pprof"
 
-	"github.com/monetas/bmd/database"
-	_ "github.com/monetas/bmd/database/memdb"
-	"github.com/monetas/bmd/peer"
+	"github.com/DanielKrawisz/bmd/database"
+	_ "github.com/DanielKrawisz/bmd/database/memdb"
+	"github.com/DanielKrawisz/bmd/peer"
 )
 
 const (
