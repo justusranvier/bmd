@@ -28,3 +28,14 @@ GUI.
 bmclient includes functionality similar to [bmwrapper]
 (https://github.com/Arceliar/bmwrapper) except that it uses the IMAP protocol
 rather than POP3.
+
+## TODO
+
+Bug: bmd does not synch with the network properly out-of-the box. It requires
+a new set of default addresses. 
+
+In the communication from bmd to bmagent, the whole of the objects should not be
+sent. Only enough should be sent for bmagent to determine whether the message
+can be decrypted. Then it should request the remainder. 
+
+Allow connections to multiple instances of bmagent.
