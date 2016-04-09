@@ -36,7 +36,7 @@ const (
 	defaultBanDuration     = time.Hour * 24
 	defaultMaxRPCClients   = 25
 	defaultDbType          = "boltdb"
-	defaultPort            = 8443 // 8444
+	defaultPort            = 8444 // 8444
 	defaultRPCPort         = 8442
 	defaultMaxUpPerPeer    = 2 * 1024 * 1024 // 2MBps
 	defaultMaxDownPerPeer  = 2 * 1024 * 1024 // 2MBps
@@ -53,8 +53,20 @@ var (
 	defaultRPCCertFile = filepath.Join(defaultDataDir, "rpc.cert")
 	defaultLogDir      = filepath.Join(defaultDataDir, defaultLogDirname)
 
-	defaultDNSSeeds = []string{"bootstrap8444.bitmessage.org:8444",
+	defaultDNSSeeds = []string{
+		"bootstrap8444.bitmessage.org:8444",
 		"bootstrap8080.bitmessage.org:8080"}
+		
+	defaultInitialNodes = []string{
+		"5.45.99.75:8444",
+		"75.167.159.54:8444",
+		"95.165.168.168:8444",
+		"85.180.139.241:8444",
+		"158.222.211.81:8080",
+		"178.62.12.187:8448",
+		"24.188.198.204:8111",
+		"109.147.204.113:1195",
+		"178.11.46.221:8444"}
 )
 
 // Filesize is a custom configuration option for go-flags. It is used to parse
@@ -153,6 +165,7 @@ type config struct {
 	oniondial       func(string, string) (net.Conn, error)
 	dial            func(string, string) (net.Conn, error)
 	dnsSeeds        []string
+	initialNodes    []string
 }
 
 // cleanAndExpandPath expands environment variables and leading ~ in the
@@ -367,6 +380,7 @@ func loadConfig(isTest bool) (*config, []string, error) {
 		RequestExpire:   defaultRequestTimeout,
 		dnsSeeds:        defaultDNSSeeds,
 		CleanupInterval: defaultCleanupInterval,
+		initialNodes:    nil,  //defaultInitialNodes,
 	}
 
 	// Pre-parse the command line options to see if an alternative config

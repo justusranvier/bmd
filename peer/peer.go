@@ -371,6 +371,10 @@ func (p *Peer) PushAddrMsg(addresses []*wire.NetAddress) error {
 	numAdded := 0
 	msg := wire.NewMsgAddr()
 	for _, Na := range addresses {
+		if Na == nil {
+			continue
+		}
+		
 		// Filter addresses the peer already knows about.
 		if _, exists := p.knownAddresses[addrmgr.NetAddressKey(Na)]; exists {
 			continue

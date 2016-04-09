@@ -738,6 +738,12 @@ func newServer(listenAddrs []string, db database.Db,
 	}
 
 	amgr := addrmgr.New(cfg.DataDir, bmdLookup)
+	
+	if (cfg.initialNodes != nil) {
+		for _, node := range cfg.initialNodes {
+			amgr.AddAddressByIP(node)
+		}
+	}
 
 	var listeners []peer.Listener
 	var nat NAT

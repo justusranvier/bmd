@@ -743,7 +743,7 @@ func ipString(na *wire.NetAddress) string {
 
 // NetAddressKey returns a string key in the form of ip:port for IPv4 addresses
 // or [ip]:port for IPv6 addresses.
-func NetAddressKey(na *wire.NetAddress) string {
+func NetAddressKey(na *wire.NetAddress) string {	
 	port := strconv.FormatUint(uint64(na.Port), 10)
 
 	return net.JoinHostPort(ipString(na), port)
