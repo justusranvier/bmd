@@ -146,7 +146,7 @@ func init() {
 
 	// Load config
 	var err error
-	cfg, _, err = loadConfig(true)
+	cfg, _, err = loadConfig()
 	if err != nil {
 		panic(fmt.Sprint("Config failed to load: ", err))
 	}

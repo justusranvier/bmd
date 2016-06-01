@@ -37,7 +37,7 @@ const (
 	defaultMaxRPCClients   = 25
 	defaultDbType          = "boltdb"
 	defaultPort            = 8444 // 8444
-	defaultRPCPort         = 8442
+	defaultRPCPort         = 8442 
 	defaultMaxUpPerPeer    = 2 * 1024 * 1024 // 2MBps
 	defaultMaxDownPerPeer  = 2 * 1024 * 1024 // 2MBps
 	defaultMaxOutbound     = 10
@@ -345,8 +345,14 @@ func createDir(path, name string) error {
 }
 
 // newConfigParser returns a new command line flags parser.
-func newConfigParser(cfg *config, options flags.Options) *flags.Parser {
-	return flags.NewParser(cfg, options)
+func newConfigParser(cfg *config, appName string, options flags.Options) *flags.Parser {
+	p := flags.NewNamedParser(appName, options)
+
+	if cfg != nil {
+		p.AddGroup("Application Options", "", cfg)
+	}
+
+	return p
 }
 
 // loadConfig initializes and parses the config using a config file and command
@@ -362,7 +368,15 @@ func newConfigParser(cfg *config, options flags.Options) *flags.Parser {
 // The above results in bmd functioning properly without any config settings
 // while still allowing the user to override settings with config files and
 // command line options. Command line options always take precedence.
-func loadConfig(isTest bool) (*config, []string, error) {
+func loadConfig() (*config, []string, error) {
+	
+	appName := filepath.Base(os.Args[0])
+	appName = strings.TrimSuffix(appName, filepath.Ext(appName))
+	
+	return LoadConfig(appName, os.Args[1:])
+}
+
+func LoadConfig(appName string, args []string) (*config, []string, error) {
 	// Default config.
 	cfg := config{
 		ConfigFile:      defaultConfigFile,
@@ -389,20 +403,16 @@ func loadConfig(isTest bool) (*config, []string, error) {
 	// the final parse below.
 	preCfg := cfg
 	var err error
-	if !isTest {
-		preParser := newConfigParser(&preCfg, flags.HelpFlag)
-		_, err = preParser.Parse()
-		if err != nil {
-			if e, ok := err.(*flags.Error); ok && e.Type == flags.ErrHelp {
-				fmt.Fprintln(os.Stderr, err)
-				return nil, nil, err
-			}
+	preParser := newConfigParser(&preCfg, appName, flags.HelpFlag)
+	_, err = preParser.ParseArgs(args)
+	if err != nil {
+		if e, ok := err.(*flags.Error); ok && e.Type == flags.ErrHelp {
+			fmt.Fprintln(os.Stderr, err)
+			return nil, nil, err
 		}
 	}
 
 	// Show the version and exit if the version flag was specified.
-	appName := filepath.Base(os.Args[0])
-	appName = strings.TrimSuffix(appName, filepath.Ext(appName))
 	usageMessage := fmt.Sprintf("Use %s -h to show usage", appName)
 	if preCfg.ShowVersion {
 		fmt.Println(appName, "version", version())
@@ -411,10 +421,12 @@ func loadConfig(isTest bool) (*config, []string, error) {
 
 	// Load additional config from file.
 	var configFileError error
-	parser := newConfigParser(&cfg, flags.Default)
-	if preCfg.ConfigFile != defaultConfigFile {
-
+	parser := newConfigParser(&cfg, appName, flags.Default)
+	// If the default location is specified, then the file isn't required to exist.
+	if preCfg.ConfigFile != defaultConfigFile || fileExists(preCfg.ConfigFile) {
+		
 		err = flags.NewIniParser(parser).ParseFile(preCfg.ConfigFile)
+
 		if err != nil {
 			if _, ok := err.(*os.PathError); !ok {
 				fmt.Fprintf(os.Stderr, "Error parsing config "+
@@ -426,16 +438,14 @@ func loadConfig(isTest bool) (*config, []string, error) {
 		}
 	}
 
+	// Parse command line options again to ensure they take precedence.
 	var remainingArgs []string
-	if !isTest {
-		// Parse command line options again to ensure they take precedence.
-		remainingArgs, err = parser.Parse()
-		if err != nil {
-			if e, ok := err.(*flags.Error); !ok || e.Type != flags.ErrHelp {
-				fmt.Fprintln(os.Stderr, usageMessage)
-			}
-			return nil, nil, err
+	remainingArgs, err = parser.ParseArgs(args)
+	if err != nil {
+		if e, ok := err.(*flags.Error); !ok || e.Type != flags.ErrHelp {
+			fmt.Fprintln(os.Stderr, usageMessage)
 		}
+		return nil, nil, err
 	}
 
 	funcName := "loadConfig"

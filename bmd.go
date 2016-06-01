@@ -39,7 +39,7 @@ var (
 func bmdMain() error {
 
 	// Load configuration.
-	tcfg, _, err := loadConfig(false)
+	tcfg, _, err := loadConfig()
 	if err != nil {
 		return err
 	}
