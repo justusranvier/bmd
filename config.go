@@ -56,8 +56,10 @@ var (
 	defaultDNSSeeds = []string{
 		"bootstrap8444.bitmessage.org:8444",
 		"bootstrap8080.bitmessage.org:8080"}
-		
+
 	defaultInitialNodes = []string{
+		"bitmessage.stashcrypto.net:8444",
+		"iifpqv7hwcdjspbb.onion:8444",
 		"5.45.99.75:8444",
 		"75.167.159.54:8444",
 		"95.165.168.168:8444",
