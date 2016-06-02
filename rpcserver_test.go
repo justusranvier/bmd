@@ -213,7 +213,7 @@ func TestRPCConnection(t *testing.T) {
 	listeners := []string{net.JoinHostPort("", "8445")}
 	serv, err = newServer(listeners, getMemDb([]*wire.MsgObject{}),
 		MockListen([]*MockListener{
-			NewMockListener(remoteAddr, make(chan peer.Connection), make(chan struct{}, 1))}))
+			NewMockListener(remoteAddr, make(chan peer.Connection), make(chan struct{}, 1))}), nil)
 
 	if err != nil {
 		t.Fatalf("Server creation failed: %s", err)

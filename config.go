@@ -532,6 +532,9 @@ func LoadConfig(appName string, args []string) (*config, []string, error) {
 		fmt.Fprintln(os.Stderr, usageMessage)
 		return nil, nil, err
 	}
+	
+	// Attach the default initial nodes. 
+	cfg.AddPeers = append(cfg.AddPeers, defaultInitialNodes...)
 
 	// --proxy or --connect without --listen disables listening.
 	if (cfg.Proxy != "" || len(cfg.ConnectPeers) > 0) &&

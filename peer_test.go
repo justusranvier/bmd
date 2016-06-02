@@ -230,7 +230,7 @@ func TestOutboundPeerHandshake(t *testing.T) {
 		}
 	}
 
-	cfg.ConnectPeers = []string{"5.45.99.75:8444"}
+	permament := []string{"5.45.99.75:8444"}
 
 	for testCase, response := range responses {
 		defer resetCfg(cfg)()
@@ -241,7 +241,8 @@ func TestOutboundPeerHandshake(t *testing.T) {
 		listeners := []string{net.JoinHostPort("", "8445")}
 		serv, err := newServer(listeners, getMemDb([]*wire.MsgObject{}),
 			MockListen([]*MockListener{
-				NewMockListener(localAddr, make(chan peer.Connection), make(chan struct{}, 1))}))
+				NewMockListener(localAddr, make(chan peer.Connection), make(chan struct{}, 1))}), 
+				permament)
 		if err != nil {
 			t.Fatalf("Server failed to start: %s", err)
 		}
@@ -256,7 +257,6 @@ func TestOutboundPeerHandshake(t *testing.T) {
 		serv.WaitForShutdown()
 	}
 
-	cfg.ConnectPeers = []string{}
 	NewConn = peer.NewConnection
 }
 
@@ -336,7 +336,7 @@ func TestInboundPeerHandshake(t *testing.T) {
 		var err error
 		serv, err := newServer(listeners, getMemDb([]*wire.MsgObject{}),
 			MockListen([]*MockListener{
-				NewMockListener(localAddr, incoming, make(chan struct{}))}))
+				NewMockListener(localAddr, incoming, make(chan struct{}))}), nil)
 		if err != nil {
 			t.Fatalf("Server failed to start: %s", err)
 		}
@@ -437,7 +437,7 @@ func TestProcessAddr(t *testing.T) {
 		listeners := []string{net.JoinHostPort("", "8445")}
 		serv, err := newServer(listeners, getMemDb([]*wire.MsgObject{}),
 			MockListen([]*MockListener{
-				NewMockListener(localAddr, incoming, make(chan struct{}))}))
+				NewMockListener(localAddr, incoming, make(chan struct{}))}), nil)
 		if err != nil {
 			t.Fatal("Server failed to start.")
 		}
@@ -567,7 +567,7 @@ func TestProcessInvAndObjectExchange(t *testing.T) {
 		db := getMemDb(test.peerDB)
 		serv, err := newServer(listeners, db,
 			MockListen([]*MockListener{
-				NewMockListener(localAddr, incoming, make(chan struct{}))}))
+				NewMockListener(localAddr, incoming, make(chan struct{}))}), nil)
 		if err != nil {
 			t.Fatal("Server failed to start.")
 		}

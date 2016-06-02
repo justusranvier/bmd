@@ -133,6 +133,7 @@ func newPeerState(maxOutbound int) *peerState {
 type server struct {
 	nonce         uint64
 	listeners     []peer.Listener
+	permanent     []string
 	started       int32 // atomic
 	shutdown      int32 // atomic
 	shutdownSched int32 // atomic
@@ -331,8 +332,6 @@ type getAddedNodesMsg struct {
 
 // AddNewPeer adds an ip address to the peer handler and adds permanent connections
 // to the set of persistant peers.
-// This function exists to add initial peers to the address manager before the
-// peerHandler go routine has entered its main loop.
 func (s *server) AddNewPeer(addr string, stream uint32, permanent bool) error {
 	serverLog.Debug("Creating peer at ", addr, ", stream: ", stream)
 
@@ -417,7 +416,7 @@ func (s *server) seedFromDNS() {
 // peerHandler is used to handle peer operations such as adding and removing
 // peers to and from the server, banning peers, and broadcasting messages to
 // peers. It must be run in a goroutine.
-func (s *server) peerHandler() {
+func (s *server) peerHandler(persistentPeers []string) {
 	serverLog.Info("Peer handler started.")
 	// Start the address manager, needed by peers.
 	// This is done here since their lifecycle is closely tied
@@ -433,15 +432,16 @@ func (s *server) peerHandler() {
 
 	// Add peers discovered through DNS to the address manager.
 	s.seedFromDNS()
-
-	// Start up persistent peers.
-	permanentPeers := cfg.ConnectPeers
-	if len(permanentPeers) == 0 {
-		permanentPeers = cfg.AddPeers
-	}
-	for _, addr := range permanentPeers {
-		s.AddNewPeer(addr, 1, true)
-	}
+	
+	// Add persistent peers. Run in a separate goroutine so as to avoid
+	// clogging up the channel. 
+	go func(persistentPeers []string) {
+		if persistentPeers != nil {
+			for _, addr := range persistentPeers {
+				s.AddNewPeer(addr, 1, true)
+			}
+		}
+	}(persistentPeers)
 
 	// if nothing else happens, wake us up soon.
 	time.AfterFunc(10*time.Second, func() { s.wakeup <- struct{}{} })
@@ -574,7 +574,7 @@ func (s *server) Start() {
 	// Start the peer handler which in turn starts the address manager and
 	// object manager.
 	s.wg.Add(1)
-	go s.peerHandler()
+	go s.peerHandler(s.permanent)
 
 	if s.nat != nil {
 		s.wg.Add(1)
@@ -722,15 +722,24 @@ out:
 	s.wg.Done()
 }
 
-// newDefaultServer returns a new server with the default listener.
+// newDefaultServer returns a new server with the default listener and 
+// initial nodes. 
 func newDefaultServer(listenAddrs []string, db database.Db) (*server, error) {
-	return newServer(listenAddrs, db, peer.Listen)
+	// Set up persistent peers.
+	var persistentPeers []string
+	if (cfg.ConnectPeers != nil && len(cfg.ConnectPeers) > 0) {
+		persistentPeers = cfg.ConnectPeers
+	} else {
+		persistentPeers = cfg.AddPeers
+	}
+	
+	return newServer(listenAddrs, db, peer.Listen, persistentPeers)
 }
 
 // newServer returns a new bmd Server configured to listen on addr for the
 // bitmessage network. Use start to begin accepting connections from peers.
 func newServer(listenAddrs []string, db database.Db,
-	listen func(string, string) (peer.Listener, error)) (*server, error) {
+	listen func(string, string) (peer.Listener, error), persistentPeers []string) (*server, error) {
 
 	nonce, err := wire.RandomUint64()
 	if err != nil {
@@ -856,9 +865,11 @@ func newServer(listenAddrs []string, db database.Db,
 			return nil, errors.New("no valid listen address")
 		}
 	}
+	
 	s := server{
 		nonce:       nonce,
 		listeners:   listeners,
+		permanent:   persistentPeers,
 		addrManager: amgr,
 		state:       newPeerState(cfg.MaxOutbound),
 		newPeers:    make(chan *peer.Peer, cfg.MaxPeers),
