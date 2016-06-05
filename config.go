@@ -167,7 +167,6 @@ type config struct {
 	oniondial       func(string, string) (net.Conn, error)
 	dial            func(string, string) (net.Conn, error)
 	dnsSeeds        []string
-	initialNodes    []string
 }
 
 // cleanAndExpandPath expands environment variables and leading ~ in the
@@ -396,7 +395,6 @@ func LoadConfig(appName string, args []string) (*config, []string, error) {
 		RequestExpire:   defaultRequestTimeout,
 		dnsSeeds:        defaultDNSSeeds,
 		CleanupInterval: defaultCleanupInterval,
-		initialNodes:    nil,  //defaultInitialNodes,
 	}
 
 	// Pre-parse the command line options to see if an alternative config

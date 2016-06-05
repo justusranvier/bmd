@@ -748,8 +748,8 @@ func newServer(listenAddrs []string, db database.Db,
 
 	amgr := addrmgr.New(cfg.DataDir, bmdLookup)
 	
-	if (cfg.initialNodes != nil) {
-		for _, node := range cfg.initialNodes {
+	if (persistentPeers != nil) {
+		for _, node := range persistentPeers {
 			amgr.AddAddressByIP(node)
 		}
 	}
